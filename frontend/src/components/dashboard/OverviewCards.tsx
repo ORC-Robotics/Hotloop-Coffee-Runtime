@@ -1,11 +1,13 @@
-import { formatMillimeters } from '../../lib/format'
+import { formatMillimeters, formatVoltage } from '../../lib/format'
 import type { TelemetryDerivedState, TelemetrySnapshot, UiTone } from '../../types/telemetry'
+import type { OverviewLayoutId } from '../../preferences/dashboardPreferencesStore'
 import { DashboardCard } from './DashboardCard'
 import { StatusBadge } from './StatusBadge'
 
 interface OverviewCardsProps {
   snapshot: TelemetrySnapshot
   derived: TelemetryDerivedState
+  layoutMode?: OverviewLayoutId
 }
 
 interface OverviewCardItem {
@@ -24,7 +26,7 @@ function toneLabel(tone: UiTone) {
   return 'neutral'
 }
 
-export function OverviewCards({ snapshot, derived }: OverviewCardsProps) {
+export function OverviewCards({ snapshot, derived, layoutMode = 'balanced' }: OverviewCardsProps) {
   const cards: OverviewCardItem[] = [
     {
       title: 'Link',
@@ -54,10 +56,31 @@ export function OverviewCards({ snapshot, derived }: OverviewCardsProps) {
       tone: derived.robotHealthTone === 'critical' ? 'warning' : 'info',
       accent: 'accent',
     },
+    {
+      title: 'Battery',
+      value: snapshot.battery.voltageV > 0 ? formatVoltage(snapshot.battery.voltageV, 2) : '--',
+      detail:
+        snapshot.battery.voltageV > 0
+          ? snapshot.battery.currentA > 0
+            ? `${snapshot.battery.currentA.toFixed(1)} A live draw`
+            : 'pack detected'
+          : 'waiting for battery telemetry',
+      tone:
+        snapshot.battery.voltageV <= 0
+          ? 'neutral'
+          : snapshot.battery.voltageV < 11
+            ? 'critical'
+            : snapshot.battery.voltageV < 11.8
+              ? 'warning'
+              : 'good',
+      accent: 'warning',
+    },
   ]
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+    <div
+      className={layoutMode === 'dataWall' ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5' : 'grid gap-3 md:grid-cols-2 2xl:grid-cols-5'}
+    >
       {cards.map((card) => (
         <DashboardCard
           key={card.title}

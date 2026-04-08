@@ -2,9 +2,17 @@ import type {
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
+  RawRemoteDriverPayload,
   RawBackendTelemetry,
+  RawTelemetryCatalogPayload,
   RawNetworkTablesPayload,
+  RemoteDriverFeed,
+  RemoteDriverStatus,
+  TelemetryCatalogFeed,
+  TelemetryCatalogStats,
   TelemetrySnapshot,
+  TelemetryTopic,
+  TelemetryTopicScope,
 } from '../types/telemetry'
 import { createBaseSnapshot } from './mockTelemetry'
 
@@ -24,8 +32,49 @@ function createFallbackBridgeStatus(): BridgeStatus {
     chooserPath: 'SmartDashboard/Auto mode',
     telemetryEndpoint: '/api/telemetry',
     controlModeEndpoint: '/api/control-mode',
+    topicCatalogEndpoint: '/api/topics',
+    topicWriteEndpoint: '/api/topics/write',
+    remoteDriverEndpoint: '/api/remote-driver',
     connected: false,
     message: 'Bridge status unavailable.',
+  }
+}
+
+function createFallbackScopeCounts(): Record<TelemetryTopicScope, number> {
+  return {
+    telemetry: 0,
+    debug: 0,
+    config: 0,
+    'auto-mode': 0,
+    other: 0,
+  }
+}
+
+function createFallbackCatalogStats(): TelemetryCatalogStats {
+  return {
+    online: false,
+    team: 0,
+    totalTopics: 0,
+    groupCount: 0,
+    scopeCounts: createFallbackScopeCounts(),
+  }
+}
+
+function createFallbackRemoteDriver(): RemoteDriverStatus {
+  return {
+    active: false,
+    mode: 'disabled',
+    heartbeatFresh: false,
+    heartbeatAgeSec: null,
+    source: 'ORION',
+    inputSource: 'idle',
+    lastAction: 'none',
+    driveX: 0,
+    driveY: 0,
+    driveZ: 0,
+    gyroAssist: true,
+    robotEnabled: false,
+    status: 'Remote driver unavailable.',
   }
 }
 
@@ -52,6 +101,7 @@ export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySn
     commands: { ...base.commands, ...payload.commands },
     encoders: { ...base.encoders, ...payload.encoders },
     systems: { ...base.systems, ...payload.systems },
+    battery: { ...base.battery, ...payload.battery },
     reactive: { ...base.reactive, ...payload.reactive },
   }
 }
@@ -68,6 +118,66 @@ export function adaptControlModePayload(payload: {
           availableModes: payload.controlMode.availableModes ?? [],
         }
       : createFallbackControlMode(),
+    bridgeStatus: payload.bridgeStatus
+      ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
+      : createFallbackBridgeStatus(),
+  }
+}
+
+export function adaptRemoteDriverPayload(payload: RawRemoteDriverPayload): RemoteDriverFeed {
+  return {
+    remoteDriver: payload.remoteDriver
+      ? {
+          ...createFallbackRemoteDriver(),
+          ...payload.remoteDriver,
+        }
+      : createFallbackRemoteDriver(),
+    bridgeStatus: payload.bridgeStatus
+      ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
+      : createFallbackBridgeStatus(),
+  }
+}
+
+function normalizeTopic(topic: Partial<TelemetryTopic>): TelemetryTopic | null {
+  if (!topic.key) {
+    return null
+  }
+
+  const keySegments = topic.key.split('/').filter(Boolean)
+  const fallbackLabel = keySegments[keySegments.length - 1] ?? topic.key
+
+  return {
+    key: topic.key,
+    label: topic.label ?? fallbackLabel,
+    scope: topic.scope ?? 'other',
+    segments: topic.segments ?? keySegments,
+    groupPath: topic.groupPath ?? keySegments.slice(0, -1).join('/'),
+    valueKind: topic.valueKind ?? 'unknown',
+    value: topic.value ?? null,
+    valueText: topic.valueText ?? 'unavailable',
+    persistent: topic.persistent ?? false,
+    isWritable: topic.isWritable ?? false,
+  }
+}
+
+export function adaptTelemetryCatalogPayload(payload: RawTelemetryCatalogPayload): TelemetryCatalogFeed {
+  const stats = createFallbackCatalogStats()
+
+  return {
+    timestamp: payload.timestamp ?? new Date().toISOString(),
+    topics: (payload.topics ?? [])
+      .map((topic) => normalizeTopic(topic))
+      .filter((topic): topic is TelemetryTopic => topic !== null),
+    stats: payload.stats
+      ? {
+          ...stats,
+          ...payload.stats,
+          scopeCounts: {
+            ...stats.scopeCounts,
+            ...(payload.stats.scopeCounts ?? {}),
+          },
+        }
+      : stats,
     bridgeStatus: payload.bridgeStatus
       ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
       : createFallbackBridgeStatus(),
@@ -119,6 +229,13 @@ export function adaptNetworkTablesPayload(payload: RawNetworkTablesPayload): Tel
       navxConnected: payload.navxConnected,
       validScan: payload.validScan,
       gyroHold: payload.gyroHold,
+    },
+    battery: {
+      voltageV: payload.voltageV,
+      currentA: payload.currentA,
+      powerW: payload.powerW,
+      stateOfCharge: payload.stateOfCharge,
+      estimatedRuntimeMin: payload.estimatedRuntimeMin,
     },
     reactive: {
       state: payload.reactiveState,

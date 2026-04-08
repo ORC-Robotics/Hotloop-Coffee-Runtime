@@ -69,6 +69,13 @@ export function createBaseSnapshot(): TelemetrySnapshot {
       validScan: true,
       gyroHold: false,
     },
+    battery: {
+      voltageV: 12.6,
+      currentA: 18,
+      powerW: 226.8,
+      stateOfCharge: 0.92,
+      estimatedRuntimeMin: 55,
+    },
     reactive: {
       state: 'CRUISE_CENTER',
       decision: 'Maintain corridor centerline and continue advancing.',
@@ -132,6 +139,13 @@ export function createOfflineSnapshot(): TelemetrySnapshot {
       navxConnected: false,
       validScan: false,
       gyroHold: false,
+    },
+    battery: {
+      voltageV: 0,
+      currentA: 0,
+      powerW: 0,
+      stateOfCharge: 0,
+      estimatedRuntimeMin: null,
     },
     reactive: {
       state: 'OFFLINE',
@@ -218,6 +232,8 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = false
       base.reactive.turnDetected = false
       base.reactive.turnExecutable = false
+      base.battery.voltageV = 12.5 + wave * 0.05
+      base.battery.currentA = 16 + Math.abs(fineWave) * 5
       break
     }
     case 'front-obstacle': {
@@ -251,6 +267,8 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = progress > 0.58
       base.reactive.turnDetected = progress > 0.34
       base.reactive.turnExecutable = progress > 0.46 && !base.perception.frontBlocked
+      base.battery.voltageV = 12.1 - progress * 0.35
+      base.battery.currentA = 28 + progress * 10
       break
     }
     case 'left-opening': {
@@ -282,6 +300,8 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = true
       base.reactive.turnDetected = true
       base.reactive.turnExecutable = true
+      base.battery.voltageV = 11.9 + wave * 0.04
+      base.battery.currentA = 32 + Math.abs(fineWave) * 8
       break
     }
     case 'right-opening': {
@@ -313,6 +333,8 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = true
       base.reactive.turnDetected = true
       base.reactive.turnExecutable = true
+      base.battery.voltageV = 11.95 + wave * 0.05
+      base.battery.currentA = 31 + Math.abs(fineWave) * 7
       break
     }
     case 'dead-end': {
@@ -346,6 +368,8 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = false
       base.reactive.turnDetected = false
       base.reactive.turnExecutable = false
+      base.battery.voltageV = 11.4 + wave * 0.06
+      base.battery.currentA = 38 + progress * 14
       break
     }
     case 'scan-instability': {
@@ -387,9 +411,18 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
       base.reactive.pendingTurnArmed = validScan ? false : null
       base.reactive.turnDetected = validScan ? false : null
       base.reactive.turnExecutable = validScan ? false : null
+      base.battery.voltageV = offlineWindow ? 11.2 : 11.8 + wave * 0.07
+      base.battery.currentA = offlineWindow ? 0 : 24 + Math.abs(fineWave) * 9
       break
     }
   }
+
+  base.battery.powerW = base.battery.voltageV * base.battery.currentA
+  base.battery.stateOfCharge = Math.max(0, Math.min(1, (base.battery.voltageV - 10.4) / 2.4))
+  base.battery.estimatedRuntimeMin =
+    base.battery.currentA > 0.5
+      ? (base.battery.stateOfCharge * 18 * 12) / Math.max(base.battery.powerW, 1) * 60
+      : null
 
   return base
 }

@@ -22,6 +22,38 @@ export function formatSeconds(value: number, digits = 1) {
   return `${value.toFixed(digits)} s`
 }
 
+export function formatVoltage(value: number, digits = 2) {
+  return `${value.toFixed(digits)} V`
+}
+
+export function formatCurrent(value: number, digits = 1) {
+  return `${value.toFixed(digits)} A`
+}
+
+export function formatPower(value: number, digits = 0) {
+  return `${value.toFixed(digits)} W`
+}
+
+export function formatPercent(value: number, digits = 0) {
+  return `${(value * 100).toFixed(digits)}%`
+}
+
+export function formatDurationMinutes(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return '--'
+  }
+
+  const totalMinutes = Math.max(0, Math.round(value))
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  }
+
+  return `${minutes} min`
+}
+
 export function formatCommand(value: number) {
   return formatSigned(value, 2)
 }

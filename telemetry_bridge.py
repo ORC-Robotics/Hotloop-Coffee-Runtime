@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,24 @@ from nt_client import NTClient, load_team_number
 AUTO_MODE_CHOOSER_PATH = "Auto mode"
 APPLIED_STATUS_HOLD = timedelta(seconds=2)
 PENDING_TIMEOUT = timedelta(seconds=5)
+TOPIC_SCOPE_ORDER = ("telemetry", "debug", "config", "auto-mode", "other")
+
+NT_TYPE_BOOLEAN = 0x01
+NT_TYPE_DOUBLE = 0x02
+NT_TYPE_STRING = 0x04
+NT_TYPE_RAW = 0x08
+NT_TYPE_BOOLEAN_ARRAY = 0x10
+NT_TYPE_DOUBLE_ARRAY = 0x20
+NT_TYPE_STRING_ARRAY = 0x40
+EDITABLE_VALUE_KINDS = {"number", "boolean", "string"}
+BATTERY_NOMINAL_CAPACITY_AH = 18.0
+REMOTE_DRIVER_ACTIONS = {
+    "enable_teleop",
+    "enable_auto",
+    "disable",
+    "reset",
+    "estop",
+}
 
 
 def utc_now() -> datetime:
@@ -21,6 +40,164 @@ def utc_now() -> datetime:
 
 def iso_now() -> str:
     return utc_now().isoformat()
+
+
+def format_number(value: float) -> str:
+    if math.isfinite(value) and float(value).is_integer():
+        return str(int(value))
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def normalize_angle_delta(value: float) -> float:
+    while value > 180.0:
+        value -= 360.0
+    while value < -180.0:
+        value += 360.0
+    return value
+
+
+def classify_scope(key: str) -> str:
+    if key.startswith("Telemetry/"):
+        return "telemetry"
+    if key.startswith("Debug/"):
+        return "debug"
+    if key.startswith("Config/"):
+        return "config"
+    if key.startswith(f"{AUTO_MODE_CHOOSER_PATH}/") or key == AUTO_MODE_CHOOSER_PATH:
+        return "auto-mode"
+    return "other"
+
+
+def normalize_scalar_value(value: Any) -> tuple[str, Any, str]:
+    if isinstance(value, bool):
+        return "boolean", value, "true" if value else "false"
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return "number", None, str(value)
+        return "number", numeric, format_number(numeric)
+
+    if isinstance(value, str):
+        return "string", value, value if value else "(empty string)"
+
+    if isinstance(value, (bytes, bytearray)):
+        preview = bytes(value[:16]).hex()
+        suffix = "..." if len(value) > 16 else ""
+        return "raw", None, f"{len(value)} bytes {preview}{suffix}".strip()
+
+    if value is None:
+        return "unknown", None, "unavailable"
+
+    return "unknown", str(value), str(value)
+
+
+def normalize_array_value(values: list[Any], type_id: int) -> tuple[str, list[Any], str]:
+    if values:
+        if all(isinstance(item, bool) for item in values):
+            return (
+                "boolean-array",
+                [bool(item) for item in values],
+                "[" + ", ".join("true" if item else "false" for item in values) + "]",
+            )
+
+        if all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in values):
+            safe_values: list[float | None] = []
+            formatted_values: list[str] = []
+            for item in values:
+                numeric = float(item)
+                if math.isfinite(numeric):
+                    safe_values.append(numeric)
+                    formatted_values.append(format_number(numeric))
+                else:
+                    safe_values.append(None)
+                    formatted_values.append(str(item))
+            return "number-array", safe_values, "[" + ", ".join(formatted_values) + "]"
+
+        if all(isinstance(item, str) for item in values):
+            return "string-array", [str(item) for item in values], "[" + ", ".join(values) + "]"
+
+    if type_id == NT_TYPE_BOOLEAN_ARRAY:
+        return "boolean-array", [], "[]"
+    if type_id == NT_TYPE_DOUBLE_ARRAY:
+        return "number-array", [], "[]"
+    if type_id == NT_TYPE_STRING_ARRAY:
+        return "string-array", [], "[]"
+
+    stringified = [str(item) for item in values]
+    return "unknown", stringified, json.dumps(stringified)
+
+
+def normalize_topic_value(value: Any, type_id: int) -> tuple[str, Any, str]:
+    if isinstance(value, (list, tuple)):
+        return normalize_array_value(list(value), type_id)
+
+    if type_id == NT_TYPE_RAW and value is None:
+        return "raw", None, "raw payload"
+
+    return normalize_scalar_value(value)
+
+
+def serialize_topic_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
+    key = str(entry.get("key", "")).strip("/")
+    if not key:
+        return None
+
+    segments = [segment for segment in key.split("/") if segment]
+    if not segments:
+        return None
+
+    value_kind, value, value_text = normalize_topic_value(entry.get("value"), int(entry.get("typeId") or 0))
+    group_path = "/".join(segments[:-1])
+    is_writable = value_kind in EDITABLE_VALUE_KINDS and (
+        classify_scope(key) == "config" or bool(entry.get("persistent", False))
+    )
+
+    return {
+        "key": key,
+        "label": segments[-1],
+        "scope": classify_scope(key),
+        "segments": segments,
+        "groupPath": group_path,
+        "valueKind": value_kind,
+        "value": value,
+        "valueText": value_text,
+        "persistent": bool(entry.get("persistent", False)),
+        "isWritable": is_writable,
+    }
+
+
+def parse_write_value(raw_value: Any, value_kind: str) -> tuple[Any, str] | None:
+    if value_kind == "number":
+        if isinstance(raw_value, bool):
+            return None
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return numeric, format_number(numeric)
+
+    if value_kind == "boolean":
+        if isinstance(raw_value, bool):
+            return raw_value, "true" if raw_value else "false"
+
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True, "true"
+            if normalized in {"false", "0", "no", "off"}:
+                return False, "false"
+        return None
+
+    if value_kind == "string":
+        if raw_value is None:
+            return None
+        text = str(raw_value)
+        return text, text if text else "(empty string)"
+
+    return None
 
 
 class ControlModeManager:
@@ -153,10 +330,164 @@ class ControlModeManager:
         return self.payload(), HTTPStatus.ACCEPTED
 
 
+class RemoteDriverManager:
+    def __init__(self, client: NTClient):
+        self.client = client
+        self.packet_sequence = 0
+        self.action_sequence = 0
+        self.last_packet_at: str | None = None
+        self.last_action_at: str | None = None
+
+    def _get_bool(self, key: str, default: bool = False) -> bool:
+        if self.client.has_key(key):
+            return self.client.get_bool(key, default)
+        return default
+
+    def _get_number(self, key: str, default: float = 0.0) -> float:
+        if self.client.has_key(key):
+            return self.client.get_number(key, default)
+        return default
+
+    def _get_optional_number(self, key: str) -> float | None:
+        if not self.client.has_key(key):
+            return None
+        return self.client.get_number(key, 0.0)
+
+    def _get_string(self, key: str, default: str = "") -> str:
+        if self.client.has_key(key):
+            return self.client.get_string(key, default)
+        return default
+
+    def payload(self) -> dict[str, Any]:
+        raw_mode = self._get_string("Telemetry/Remote Driver/Mode", "DISABLED").strip().upper()
+        if raw_mode == "TELEOP":
+            mode = "teleop"
+        elif raw_mode == "AUTONOMOUS":
+            mode = "autonomous"
+        else:
+            mode = "disabled"
+
+        online = self.client.is_connected()
+        status = self._get_string(
+            "Telemetry/Remote Driver/Status",
+            "Robot offline. Remote driver unavailable." if not online else "Remote driver status unavailable.",
+        )
+
+        return {
+            "active": self._get_bool("Telemetry/Remote Driver/Active", False),
+            "mode": mode,
+            "heartbeatFresh": self._get_bool("Telemetry/Remote Driver/Heartbeat Fresh", False),
+            "heartbeatAgeSec": self._get_optional_number("Telemetry/Remote Driver/Heartbeat Age (s)"),
+            "source": self._get_string("Telemetry/Remote Driver/Source", "ORION"),
+            "inputSource": self._get_string("Telemetry/Remote Driver/Input Source", "idle"),
+            "lastAction": self._get_string("Telemetry/Remote Driver/Last Action", "none"),
+            "driveX": self._get_number("Telemetry/Remote Driver/Drive X", 0.0),
+            "driveY": self._get_number("Telemetry/Remote Driver/Drive Y", 0.0),
+            "driveZ": self._get_number("Telemetry/Remote Driver/Drive Z", 0.0),
+            "gyroAssist": self._get_bool("Telemetry/Remote Driver/Gyro Assist", True),
+            "robotEnabled": self._get_bool("Telemetry/Robot/Enabled", False),
+            "status": status,
+            "lastPacketAt": self.last_packet_at,
+            "lastActionAt": self.last_action_at,
+        }
+
+    def _publish_zero_packet(self, source: str) -> bool:
+        self.packet_sequence += 1
+        return all(
+            (
+                self.client.put_number("Control/Remote Driver/Drive X", 0.0),
+                self.client.put_number("Control/Remote Driver/Drive Y", 0.0),
+                self.client.put_number("Control/Remote Driver/Drive Z", 0.0),
+                self.client.put_bool("Control/Remote Driver/Gyro Assist", True),
+                self.client.put_string("Control/Remote Driver/Source", source),
+                self.client.put_string("Control/Remote Driver/Input Source", "idle"),
+                self.client.put_number("Control/Remote Driver/Packet Sequence", float(self.packet_sequence)),
+            )
+        )
+
+    def publish_state(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        gyro_assist: Any,
+        source: str,
+        input_source: str,
+    ) -> tuple[dict[str, Any], HTTPStatus]:
+        if not self.client.is_connected():
+            return {"error": "robot link offline"}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        try:
+            clamped_x = max(-1.0, min(1.0, float(x)))
+            clamped_y = max(-1.0, min(1.0, float(y)))
+            clamped_z = max(-1.0, min(1.0, float(z)))
+        except (TypeError, ValueError):
+            return {"error": "x, y and z must be numeric"}, HTTPStatus.BAD_REQUEST
+
+        if not all(math.isfinite(value) for value in (clamped_x, clamped_y, clamped_z)):
+            return {"error": "x, y and z must be finite"}, HTTPStatus.BAD_REQUEST
+
+        self.packet_sequence += 1
+        safe_source = source.strip() or "ORION"
+        safe_input_source = input_source.strip() or "idle"
+        success = all(
+            (
+                self.client.put_number("Control/Remote Driver/Drive X", clamped_x),
+                self.client.put_number("Control/Remote Driver/Drive Y", clamped_y),
+                self.client.put_number("Control/Remote Driver/Drive Z", clamped_z),
+                self.client.put_bool("Control/Remote Driver/Gyro Assist", bool(gyro_assist)),
+                self.client.put_string("Control/Remote Driver/Source", safe_source),
+                self.client.put_string("Control/Remote Driver/Input Source", safe_input_source),
+                self.client.put_number("Control/Remote Driver/Packet Sequence", float(self.packet_sequence)),
+            )
+        )
+
+        if not success:
+            return {"error": "failed to publish remote driver packet"}, HTTPStatus.BAD_GATEWAY
+
+        self.last_packet_at = iso_now()
+        return {
+            "remoteDriver": self.payload(),
+            "message": "Remote driver packet published.",
+        }, HTTPStatus.ACCEPTED
+
+    def publish_action(self, action: str, source: str) -> tuple[dict[str, Any], HTTPStatus]:
+        if not self.client.is_connected():
+            return {"error": "robot link offline"}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        normalized_action = action.strip().lower()
+        if normalized_action not in REMOTE_DRIVER_ACTIONS:
+            return {"error": f"unsupported action '{action}'"}, HTTPStatus.BAD_REQUEST
+
+        safe_source = source.strip() or "ORION"
+        zero_packet_ok = True
+        if normalized_action in {"disable", "reset", "estop", "enable_auto"}:
+            zero_packet_ok = self._publish_zero_packet(safe_source)
+
+        self.action_sequence += 1
+        action_ok = all(
+            (
+                self.client.put_string("Control/Remote Driver/Source", safe_source),
+                self.client.put_string("Control/Remote Driver/Requested Action", normalized_action),
+                self.client.put_number("Control/Remote Driver/Action Sequence", float(self.action_sequence)),
+            )
+        )
+
+        if not zero_packet_ok or not action_ok:
+            return {"error": "failed to publish remote driver action"}, HTTPStatus.BAD_GATEWAY
+
+        self.last_action_at = iso_now()
+        return {
+            "remoteDriver": self.payload(),
+            "message": f"Remote action '{normalized_action}' published.",
+        }, HTTPStatus.ACCEPTED
+
+
 class TelemetryBridge:
     def __init__(self, team: int):
         self.client = NTClient(team)
         self.control_mode = ControlModeManager(self.client)
+        self.remote_driver = RemoteDriverManager(self.client)
 
     def _get_bool_alias(self, *keys: str, default: bool = False) -> bool:
         for key in keys:
@@ -190,14 +521,88 @@ class TelemetryBridge:
             "chooserPath": f"SmartDashboard/{AUTO_MODE_CHOOSER_PATH}",
             "telemetryEndpoint": "/api/telemetry",
             "controlModeEndpoint": "/api/control-mode",
+            "topicCatalogEndpoint": "/api/topics",
+            "topicWriteEndpoint": "/api/topics/write",
+            "remoteDriverEndpoint": "/api/remote-driver",
             "connected": self.client.is_connected(),
             "lastSyncAt": control_state.get("lastSyncAt"),
             "message": control_state.get("message"),
         }
 
+    def topics_payload(self) -> dict[str, Any]:
+        topics: list[dict[str, Any]] = []
+        scope_counts = {scope: 0 for scope in TOPIC_SCOPE_ORDER}
+        group_paths: set[str] = set()
+
+        for raw_entry in self.client.get_all_entries():
+            serialized = serialize_topic_entry(raw_entry)
+            if serialized is None:
+                continue
+
+            topics.append(serialized)
+            scope_counts[serialized["scope"]] = scope_counts.get(serialized["scope"], 0) + 1
+            if serialized["groupPath"]:
+                group_paths.add(serialized["groupPath"])
+
+        return {
+            "timestamp": iso_now(),
+            "bridgeStatus": self.bridge_status(),
+            "stats": {
+                "online": self.client.is_connected(),
+                "team": self.client.team,
+                "totalTopics": len(topics),
+                "groupCount": len(group_paths),
+                "scopeCounts": scope_counts,
+            },
+            "topics": topics,
+        }
+
+    def update_topic_value(self, key: str, value_kind: str, value: Any) -> tuple[dict[str, Any], HTTPStatus]:
+        if not self.client.is_connected():
+            return {"error": "robot link offline"}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        entry = self.client.read_entry(key)
+        serialized = serialize_topic_entry(entry) if entry is not None else None
+
+        if serialized is None:
+            return {"error": "topic not found"}, HTTPStatus.NOT_FOUND
+
+        if not serialized.get("isWritable"):
+            return {"error": "topic is not writable"}, HTTPStatus.FORBIDDEN
+
+        if serialized.get("valueKind") != value_kind:
+            return {"error": "valueKind does not match the live topic type"}, HTTPStatus.BAD_REQUEST
+
+        parsed = parse_write_value(value, value_kind)
+        if parsed is None:
+            return {"error": "invalid value for topic type"}, HTTPStatus.BAD_REQUEST
+
+        coerced_value, _ = parsed
+
+        if value_kind == "number":
+            success = self.client.put_number(key, float(coerced_value))
+        elif value_kind == "boolean":
+            success = self.client.put_bool(key, bool(coerced_value))
+        elif value_kind == "string":
+            success = self.client.put_string(key, str(coerced_value))
+        else:
+            return {"error": "unsupported topic type"}, HTTPStatus.BAD_REQUEST
+
+        if not success:
+            return {"error": "failed to publish value to NetworkTables"}, HTTPStatus.BAD_GATEWAY
+
+        updated_entry = self.client.read_entry(key)
+        updated_topic = serialize_topic_entry(updated_entry) if updated_entry is not None else serialized
+
+        return {
+            "topic": updated_topic,
+            "message": f"Updated {key}.",
+        }, HTTPStatus.ACCEPTED
+
     def payload(self) -> dict[str, Any]:
         control_mode = self.control_mode.refresh()
         online = self.client.is_connected()
+        robot_enabled = self._get_bool_alias("Telemetry/Robot/Enabled", default=False)
         lidar_healthy = self._get_bool_alias(
             "Telemetry/Lidar/Healthy",
             "Telemetry/LiDAR/Healthy",
@@ -246,6 +651,34 @@ class TelemetryBridge:
         elif online and connected_host == "unknown":
             connected_host = self.client.connection_target
 
+        battery_voltage = self._get_number_alias("Telemetry/Robot/Battery Voltage", default=0.0)
+        battery_current = self._get_number_alias("Telemetry/Robot/Battery Current", default=0.0)
+        battery_power = battery_voltage * battery_current
+        battery_soc = max(0.0, min(1.0, (battery_voltage - 10.4) / 2.4)) if battery_voltage > 0 else 0.0
+        estimated_runtime_min = None
+        if battery_current > 0.5 and battery_voltage > 0:
+            remaining_wh = battery_soc * BATTERY_NOMINAL_CAPACITY_AH * 12.0
+            estimated_runtime_min = max(0.0, (remaining_wh / max(battery_power, 1.0)) * 60.0)
+
+        live_yaw_deg = self._get_number_alias(
+            "Telemetry/NavX/Filtered Yaw (deg)",
+            "Telemetry/Drive/Yaw (deg)",
+            "Telemetry/Reactive/Pose Heading (deg)",
+            "Telemetry/NavX/Raw Yaw (deg)",
+            default=0.0,
+        )
+        reactive_target_yaw_deg = self._get_number_alias(
+            "Telemetry/Reactive/Target Yaw (deg)",
+            default=live_yaw_deg,
+        )
+
+        if robot_enabled:
+            target_yaw_deg = reactive_target_yaw_deg
+            angular_error_deg = normalize_angle_delta(target_yaw_deg - live_yaw_deg)
+        else:
+            target_yaw_deg = live_yaw_deg
+            angular_error_deg = 0.0
+
         return {
             "timestamp": iso_now(),
             "scenarioLabel": "live robot telemetry" if online else "live standby",
@@ -260,9 +693,9 @@ class TelemetryBridge:
                 "health": connection_health,
             },
             "heading": {
-                "yawDeg": self._get_number_alias("Telemetry/Reactive/Pose Heading (deg)", default=0.0),
-                "targetYawDeg": self._get_number_alias("Telemetry/Reactive/Target Yaw (deg)", default=0.0),
-                "angularErrorDeg": self._get_number_alias("Telemetry/Reactive/Angular Error", default=0.0),
+                "yawDeg": live_yaw_deg,
+                "targetYawDeg": target_yaw_deg,
+                "angularErrorDeg": angular_error_deg,
                 "lateralErrorM": self._get_number_alias("Telemetry/Reactive/Lateral Error", default=0.0),
             },
             "perception": {
@@ -294,6 +727,13 @@ class TelemetryBridge:
                 "validScan": valid_scan,
                 "gyroHold": self._get_bool_alias("Telemetry/Reactive/Gyro Hold Active", default=False),
             },
+            "battery": {
+                "voltageV": battery_voltage,
+                "currentA": battery_current,
+                "powerW": battery_power,
+                "stateOfCharge": battery_soc,
+                "estimatedRuntimeMin": estimated_runtime_min,
+            },
             "reactive": {
                 "state": self._get_string_alias("Telemetry/Reactive/State", default="OFFLINE"),
                 "decision": self._get_string_alias(
@@ -318,6 +758,7 @@ class TelemetryBridge:
                 "turnExecutable": self._get_optional_bool_alias("Telemetry/Reactive/Turn Executable"),
             },
             "controlMode": control_mode,
+            "remoteDriver": self.remote_driver.payload(),
         }
 
 
@@ -356,6 +797,10 @@ def build_handler(bridge: TelemetryBridge):
                 self._send_json(bridge.payload())
                 return
 
+            if self.path == "/api/topics":
+                self._send_json(bridge.topics_payload())
+                return
+
             if self.path == "/api/control-mode":
                 self._send_json(
                     {
@@ -365,31 +810,105 @@ def build_handler(bridge: TelemetryBridge):
                 )
                 return
 
+            if self.path == "/api/remote-driver":
+                self._send_json(
+                    {
+                        "remoteDriver": bridge.remote_driver.payload(),
+                        "bridgeStatus": bridge.bridge_status(),
+                    }
+                )
+                return
+
             self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/api/control-mode":
-                self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
-                return
-
             payload = self._read_json()
-            if payload.get("type") != "set_control_mode":
-                self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+
+            if self.path == "/api/control-mode":
+                if payload.get("type") != "set_control_mode":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                mode_id = str(payload.get("payload", {}).get("modeId", "")).strip()
+                if not mode_id:
+                    self._send_json({"error": "modeId is required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                control_mode, status = bridge.control_mode.request_mode_change(mode_id)
+                self._send_json(
+                    {
+                        "controlMode": control_mode,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
                 return
 
-            mode_id = str(payload.get("payload", {}).get("modeId", "")).strip()
-            if not mode_id:
-                self._send_json({"error": "modeId is required"}, status=HTTPStatus.BAD_REQUEST)
+            if self.path == "/api/topics/write":
+                if payload.get("type") != "write_topic_value":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                topic_payload = payload.get("payload", {})
+                key = str(topic_payload.get("key", "")).strip()
+                value_kind = str(topic_payload.get("valueKind", "")).strip()
+                if not key or not value_kind:
+                    self._send_json({"error": "key and valueKind are required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                response, status = bridge.update_topic_value(key, value_kind, topic_payload.get("value"))
+                self._send_json(
+                    {
+                        **response,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
                 return
 
-            control_mode, status = bridge.control_mode.request_mode_change(mode_id)
-            self._send_json(
-                {
-                    "controlMode": control_mode,
-                    "bridgeStatus": bridge.bridge_status(),
-                },
-                status=status,
-            )
+            if self.path == "/api/remote-driver/state":
+                if payload.get("type") != "set_remote_driver_state":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                driver_payload = payload.get("payload", {})
+                response, status = bridge.remote_driver.publish_state(
+                    x=driver_payload.get("x"),
+                    y=driver_payload.get("y"),
+                    z=driver_payload.get("z"),
+                    gyro_assist=driver_payload.get("gyroAssist", True),
+                    source=str(driver_payload.get("source", "ORION")),
+                    input_source=str(driver_payload.get("inputSource", "idle")),
+                )
+                self._send_json(
+                    {
+                        **response,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
+                return
+
+            if self.path == "/api/remote-driver/action":
+                if payload.get("type") != "send_remote_driver_action":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                driver_payload = payload.get("payload", {})
+                response, status = bridge.remote_driver.publish_action(
+                    action=str(driver_payload.get("action", "")),
+                    source=str(driver_payload.get("source", "ORION")),
+                )
+                self._send_json(
+                    {
+                        **response,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
+                return
+
+            self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def log_message(self, format: str, *args: object) -> None:
             return

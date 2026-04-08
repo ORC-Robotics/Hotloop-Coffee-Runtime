@@ -66,6 +66,24 @@ export function deriveAlerts(snapshot: TelemetrySnapshot): AlertItem[] {
     })
   }
 
+  if (snapshot.battery.voltageV > 0 && snapshot.battery.voltageV < 11.0) {
+    alerts.push({
+      id: 'battery-critical',
+      severity: 'critical',
+      source: 'systems',
+      title: 'Battery sag critical',
+      message: `Battery voltage dropped to ${snapshot.battery.voltageV.toFixed(2)} V.`,
+    })
+  } else if (snapshot.battery.voltageV > 0 && snapshot.battery.voltageV < 11.8) {
+    alerts.push({
+      id: 'battery-warning',
+      severity: 'warning',
+      source: 'systems',
+      title: 'Battery droop detected',
+      message: `Battery voltage is ${snapshot.battery.voltageV.toFixed(2)} V under load.`,
+    })
+  }
+
   if (snapshot.perception.frontBlocked) {
     alerts.push({
       id: 'front-blocked',

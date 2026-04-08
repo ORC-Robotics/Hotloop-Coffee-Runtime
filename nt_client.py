@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from networktables import NetworkTablesInstance
 
@@ -238,3 +239,118 @@ class NTClient:
             return bool(table.putString(key, value))
         except Exception:
             return False
+
+    def put_number(self, key: str, value: float) -> bool:
+        try:
+            return bool(self.sd.putNumber(key, value))
+        except Exception:
+            return False
+
+    def put_bool(self, key: str, value: bool) -> bool:
+        try:
+            return bool(self.sd.putBoolean(key, value))
+        except Exception:
+            return False
+
+    def put_string(self, key: str, value: str) -> bool:
+        try:
+            return bool(self.sd.putString(key, value))
+        except Exception:
+            return False
+
+    def read_entry(self, key: str) -> dict[str, Any] | None:
+        if not key:
+            return None
+
+        entry = None
+        try:
+            entry = self.sd.getEntry(key)
+        except Exception:
+            entry = None
+
+        try:
+            value = self.sd.getValue(key, None)
+        except Exception:
+            value = None
+
+        if entry is None and value is None:
+            return None
+
+        try:
+            type_id = int(entry.getType()) if entry is not None else 0
+        except Exception:
+            type_id = 0
+
+        try:
+            persistent = bool(entry.isPersistent()) if entry is not None else False
+        except Exception:
+            persistent = False
+
+        return {
+            "key": key,
+            "value": value,
+            "typeId": type_id,
+            "persistent": persistent,
+        }
+
+    def _collect_entries(self, table, prefix: str = "") -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+
+        try:
+            keys = sorted(str(key) for key in table.getKeys())
+        except Exception:
+            keys = []
+
+        for key in keys:
+            full_key = f"{prefix}/{key}" if prefix else key
+            entry = None
+            try:
+                entry = table.getEntry(key)
+            except Exception:
+                entry = None
+
+            try:
+                value = table.getValue(key, None)
+            except Exception:
+                value = None
+
+            try:
+                type_id = int(entry.getType()) if entry is not None else 0
+            except Exception:
+                type_id = 0
+
+            try:
+                persistent = bool(entry.isPersistent()) if entry is not None else False
+            except Exception:
+                persistent = False
+
+            entries.append(
+                {
+                    "key": full_key,
+                    "value": value,
+                    "typeId": type_id,
+                    "persistent": persistent,
+                }
+            )
+
+        try:
+            subtables = sorted(str(name) for name in table.getSubTables())
+        except Exception:
+            subtables = []
+
+        for subtable_name in subtables:
+            try:
+                subtable = table.getSubTable(subtable_name)
+            except Exception:
+                continue
+
+            if subtable is None:
+                continue
+
+            child_prefix = f"{prefix}/{subtable_name}" if prefix else subtable_name
+            entries.extend(self._collect_entries(subtable, child_prefix))
+
+        return entries
+
+    def get_all_entries(self) -> list[dict[str, Any]]:
+        return self._collect_entries(self.sd)

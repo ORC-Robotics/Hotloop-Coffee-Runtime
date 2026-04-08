@@ -1,11 +1,17 @@
 import type { ThemeTokens } from './tokens'
 
-export type ThemeId = 'neutralPastel' | 'darkTechnical'
+export type ThemeId =
+  | 'neutralPastel'
+  | 'darkTechnical'
+  | 'fieldCopper'
+  | 'radarForest'
+  | 'slateSignal'
 
 export interface ThemeDefinition {
   id: ThemeId
   label: string
   description: string
+  colorScheme: 'light' | 'dark'
   tokens: ThemeTokens
 }
 
@@ -14,6 +20,7 @@ export const themes: Record<ThemeId, ThemeDefinition> = {
     id: 'neutralPastel',
     label: 'Neutral Pastel',
     description: 'Warm off-white operational theme with calm technical accents.',
+    colorScheme: 'light',
     tokens: {
       background: '#f5f2eb',
       backgroundSubtle: '#ece7df',
@@ -48,6 +55,7 @@ export const themes: Record<ThemeId, ThemeDefinition> = {
     id: 'darkTechnical',
     label: 'Dark Technical',
     description: 'Low-light technical theme with restrained contrast and reliable status colors.',
+    colorScheme: 'dark',
     tokens: {
       background: '#0a1020',
       backgroundSubtle: '#0f1730',
@@ -76,6 +84,111 @@ export const themes: Record<ThemeId, ThemeDefinition> = {
       gaugeTrack: '#243554',
       gaugeTick: '#8ea4c5',
       overlay: 'rgba(10, 16, 32, 0.72)',
+    },
+  },
+  fieldCopper: {
+    id: 'fieldCopper',
+    label: 'Field Copper',
+    description: 'Warm field-side palette with brass accents and lighter instrumentation surfaces.',
+    colorScheme: 'light',
+    tokens: {
+      background: '#efe8dd',
+      backgroundSubtle: '#e5dccf',
+      surface: '#fcf7f0',
+      surfaceAlt: '#f1e8dd',
+      surfaceRaised: '#fffaf3',
+      border: '#d2c4b4',
+      borderStrong: '#ae8f6d',
+      text: '#2f261f',
+      textMuted: '#75685b',
+      primary: '#8a6d4d',
+      primarySoft: '#ebdecf',
+      success: '#4f8a6b',
+      successSoft: '#dbeee4',
+      warning: '#cb8a2c',
+      warningSoft: '#f7e4c6',
+      danger: '#b75d51',
+      dangerSoft: '#f2ddd8',
+      accent: '#b36a49',
+      accentSoft: '#efd9cf',
+      info: '#4a7d8f',
+      infoSoft: '#d8e8ee',
+      cardShadow: '0 14px 34px rgba(96, 74, 51, 0.12)',
+      cardShadowStrong: '0 22px 48px rgba(96, 74, 51, 0.18)',
+      gridLine: 'rgba(143, 109, 74, 0.12)',
+      gaugeTrack: '#dac8b5',
+      gaugeTick: '#9a7c5e',
+      overlay: 'rgba(252, 247, 240, 0.74)',
+    },
+  },
+  radarForest: {
+    id: 'radarForest',
+    label: 'Radar Forest',
+    description: 'Dark green operations deck with radar-inspired contrast and softer highlights.',
+    colorScheme: 'dark',
+    tokens: {
+      background: '#07130f',
+      backgroundSubtle: '#0a1914',
+      surface: '#10211b',
+      surfaceAlt: '#162a22',
+      surfaceRaised: '#1b332a',
+      border: '#224238',
+      borderStrong: '#3d6f5e',
+      text: '#ecf6f0',
+      textMuted: '#9cb8ac',
+      primary: '#59c38f',
+      primarySoft: 'rgba(89, 195, 143, 0.18)',
+      success: '#7dda8a',
+      successSoft: 'rgba(125, 218, 138, 0.18)',
+      warning: '#e5b75c',
+      warningSoft: 'rgba(229, 183, 92, 0.16)',
+      danger: '#eb7373',
+      dangerSoft: 'rgba(235, 115, 115, 0.18)',
+      accent: '#72a69a',
+      accentSoft: 'rgba(114, 166, 154, 0.18)',
+      info: '#5eb8c6',
+      infoSoft: 'rgba(94, 184, 198, 0.18)',
+      cardShadow: '0 16px 42px rgba(0, 0, 0, 0.34)',
+      cardShadowStrong: '0 24px 58px rgba(0, 0, 0, 0.42)',
+      gridLine: 'rgba(110, 181, 148, 0.12)',
+      gaugeTrack: '#234338',
+      gaugeTick: '#87b39e',
+      overlay: 'rgba(7, 19, 15, 0.76)',
+    },
+  },
+  slateSignal: {
+    id: 'slateSignal',
+    label: 'Slate Signal',
+    description: 'Blue-slate command surface with brighter signal accents and cooler contrast.',
+    colorScheme: 'dark',
+    tokens: {
+      background: '#10161d',
+      backgroundSubtle: '#141d26',
+      surface: '#18232f',
+      surfaceAlt: '#1f2b38',
+      surfaceRaised: '#263446',
+      border: '#304255',
+      borderStrong: '#55718f',
+      text: '#eef4fb',
+      textMuted: '#9aaec4',
+      primary: '#74a8ff',
+      primarySoft: 'rgba(116, 168, 255, 0.18)',
+      success: '#58d4a2',
+      successSoft: 'rgba(88, 212, 162, 0.18)',
+      warning: '#f0b35d',
+      warningSoft: 'rgba(240, 179, 93, 0.18)',
+      danger: '#f1767f',
+      dangerSoft: 'rgba(241, 118, 127, 0.18)',
+      accent: '#6ac4d8',
+      accentSoft: 'rgba(106, 196, 216, 0.18)',
+      info: '#87b3ff',
+      infoSoft: 'rgba(135, 179, 255, 0.18)',
+      cardShadow: '0 14px 40px rgba(0, 0, 0, 0.28)',
+      cardShadowStrong: '0 22px 56px rgba(0, 0, 0, 0.36)',
+      gridLine: 'rgba(124, 163, 224, 0.12)',
+      gaugeTrack: '#324659',
+      gaugeTick: '#9bb1c9',
+      overlay: 'rgba(16, 22, 29, 0.76)',
     },
   },
 }

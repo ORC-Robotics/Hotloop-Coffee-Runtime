@@ -27,7 +27,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     })
 
     root.dataset.theme = themeId
-    root.style.colorScheme = themeId === 'neutralPastel' ? 'light' : 'dark'
+    root.style.colorScheme = theme.colorScheme
     window.localStorage.setItem(STORAGE_KEY, themeId)
   }, [theme, themeId])
 

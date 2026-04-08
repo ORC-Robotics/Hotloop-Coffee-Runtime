@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { getTelemetrySnapshot, subscribeTelemetry } from '../data/robotBridge'
 import { createOfflineSnapshot, generateMockTelemetryFrame } from '../data/mockTelemetry'
 import { deriveAlerts, deriveTelemetryState } from '../lib/alertRules'
-import type { TelemetryFeed, TelemetrySnapshot } from '../types/telemetry'
+import type { BatteryHistoryPoint, TelemetryFeed, TelemetrySnapshot } from '../types/telemetry'
 
-const TICK_MS = 350
+const TICK_MS = 150
+const BATTERY_HISTORY_INTERVAL_MS = 450
+const MAX_BATTERY_POINTS = 48
 const TELEMETRY_MODE =
   import.meta.env.VITE_TELEMETRY_MODE === 'mock'
     ? 'mock'
@@ -47,10 +49,36 @@ function toBridgeOfflineSnapshot(previous?: TelemetrySnapshot): TelemetrySnapsho
   }
 }
 
+function appendBatteryHistory(
+  previous: BatteryHistoryPoint[],
+  snapshot: TelemetrySnapshot,
+): BatteryHistoryPoint[] {
+  if (!snapshot.connection.online || snapshot.battery.voltageV <= 0) {
+    return previous
+  }
+
+  const timestampMs = new Date(snapshot.timestamp).getTime()
+  if (Number.isNaN(timestampMs)) {
+    return previous
+  }
+
+  const lastPoint = previous[previous.length - 1]
+  if (lastPoint) {
+    const lastTimestampMs = new Date(lastPoint.timestamp).getTime()
+    if (!Number.isNaN(lastTimestampMs) && timestampMs - lastTimestampMs < BATTERY_HISTORY_INTERVAL_MS) {
+      return previous
+    }
+  }
+
+  const next = [...previous, { timestamp: snapshot.timestamp, voltageV: snapshot.battery.voltageV }]
+  return next.slice(-MAX_BATTERY_POINTS)
+}
+
 export function useTelemetry(): TelemetryFeed {
   const [snapshot, setSnapshot] = useState(() =>
     TELEMETRY_MODE === 'mock' ? generateMockTelemetryFrame(Date.now()) : createOfflineSnapshot(),
   )
+  const [batteryHistory, setBatteryHistory] = useState<BatteryHistoryPoint[]>([])
 
   useEffect(() => {
     if (TELEMETRY_MODE !== 'mock') {
@@ -58,7 +86,9 @@ export function useTelemetry(): TelemetryFeed {
     }
 
     const interval = window.setInterval(() => {
-      setSnapshot(generateMockTelemetryFrame(Date.now()))
+      const nextSnapshot = generateMockTelemetryFrame(Date.now())
+      setSnapshot(nextSnapshot)
+      setBatteryHistory((previous) => appendBatteryHistory(previous, nextSnapshot))
     }, TICK_MS)
 
     return () => {
@@ -74,6 +104,7 @@ export function useTelemetry(): TelemetryFeed {
     return subscribeTelemetry(
       (incoming) => {
         setSnapshot((previous) => mergeIncomingSnapshot(previous, incoming))
+        setBatteryHistory((previous) => appendBatteryHistory(previous, incoming))
       },
       () => {
         setSnapshot((previous) => {
@@ -103,5 +134,6 @@ export function useTelemetry(): TelemetryFeed {
     snapshot,
     alerts,
     derived,
+    batteryHistory,
   }
 }
