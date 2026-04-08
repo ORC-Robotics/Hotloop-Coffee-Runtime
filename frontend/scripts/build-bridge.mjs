@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,7 @@ const pyInstallerWorkDir = path.join(pyInstallerRoot, 'build')
 const pyInstallerSpecDir = path.join(pyInstallerRoot, 'spec')
 const venvDir = path.join(repoRoot, '.venv-bridge-build')
 const tempRoot = path.join(repoRoot, '.tmp', 'python-build')
+const bridgeBinaryName = process.platform === 'win32' ? 'orion-telemetry-bridge.exe' : 'orion-telemetry-bridge'
 
 function getPythonExecutable(venvPath) {
   return process.platform === 'win32'
@@ -103,18 +104,26 @@ function ensureDirectories() {
   mkdirSync(tempRoot, { recursive: true })
 }
 
+function getBridgeExecutablePath() {
+  return path.join(bridgeDistDir, bridgeBinaryName)
+}
+
 function stopExistingBridgeProcesses() {
-  if (process.platform !== 'win32') {
+  if (process.platform === 'win32') {
+    const result = spawnSync('taskkill', ['/F', '/IM', 'orion-telemetry-bridge.exe'], {
+      stdio: 'ignore',
+    })
+
+    if (result.error) {
+      throw result.error
+    }
+
     return
   }
 
-  const result = spawnSync('taskkill', ['/F', '/IM', 'orion-telemetry-bridge.exe'], {
+  spawnSync('pkill', ['-f', 'orion-telemetry-bridge'], {
     stdio: 'ignore',
   })
-
-  if (result.error) {
-    throw result.error
-  }
 }
 
 function ensureVirtualEnv(pythonLauncher) {
@@ -175,7 +184,7 @@ function buildBridgeBinary() {
   )
 
   stopExistingBridgeProcesses()
-  rmSync(path.join(bridgeDistDir, 'orion-telemetry-bridge.exe'), { force: true })
+  rmSync(getBridgeExecutablePath(), { force: true })
 
   run(
     pythonLauncher.command,
@@ -198,6 +207,10 @@ function buildBridgeBinary() {
     ],
     { env: tempEnv },
   )
+
+  if (process.platform !== 'win32') {
+    chmodSync(getBridgeExecutablePath(), 0o755)
+  }
 }
 
 buildBridgeBinary()

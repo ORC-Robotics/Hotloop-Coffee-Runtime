@@ -36,8 +36,11 @@
     ],
     "extraResources": [
       {
-        "from": "bridge-dist/orion-telemetry-bridge.exe",
-        "to": "bridge/orion-telemetry-bridge.exe"
+        "from": "bridge-dist/",
+        "to": "bridge",
+        "filter": [
+          "orion-telemetry-bridge*"
+        ]
       }
     ],
     "win": {
@@ -46,6 +49,13 @@
       ],
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
     }
   },
   "dependencies": {

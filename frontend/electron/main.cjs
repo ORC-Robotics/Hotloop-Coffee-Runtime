@@ -109,12 +109,16 @@ function resolveRendererEntry() {
   return path.join(app.getAppPath(), 'dist', 'index.html')
 }
 
+function getBridgeBinaryName() {
+  return process.platform === 'win32' ? 'orion-telemetry-bridge.exe' : 'orion-telemetry-bridge'
+}
+
 function resolveBridgeExecutablePath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'bridge', 'orion-telemetry-bridge.exe')
+    return path.join(process.resourcesPath, 'bridge', getBridgeBinaryName())
   }
 
-  return path.resolve(__dirname, '..', 'bridge-dist', 'orion-telemetry-bridge.exe')
+  return path.resolve(__dirname, '..', 'bridge-dist', getBridgeBinaryName())
 }
 
 function getPythonCandidates() {
