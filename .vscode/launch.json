@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Telemetry Bridge",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "powershell -ExecutionPolicy Bypass -File .\\run_bridge.ps1"
+        },
+        {
+            "name": "React Dashboard Live",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "powershell -ExecutionPolicy Bypass -File .\\run_live_dashboard.ps1"
+        },
+        {
+            "name": "Frontend: Run Vite",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "powershell -ExecutionPolicy Bypass -File .\\run_frontend.ps1"
+        }
+    ]
+}
