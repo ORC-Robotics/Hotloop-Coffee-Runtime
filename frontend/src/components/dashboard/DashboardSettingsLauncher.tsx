@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDashboardPreferences } from '../../preferences/useDashboardPreferences'
 import type {
   CameraFeedConfig,
@@ -203,6 +204,209 @@ export function DashboardSettingsLauncher() {
   } = useDashboardPreferences()
 
   const layoutLocked = preferences.layout.layoutLocked
+  const canPortal = typeof document !== 'undefined'
+
+  useEffect(() => {
+    if (!open || !canPortal) {
+      return
+    }
+
+    const previousOverflow = document.body.style.overflow
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [canPortal, open])
+
+  const settingsOverlay =
+    open && canPortal
+      ? createPortal(
+          <div className="fixed inset-0 z-[120]">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="absolute inset-0 h-full w-full bg-black/34 backdrop-blur-[3px]"
+              aria-label="Close settings overlay"
+            />
+
+            <aside className="absolute inset-y-0 right-0 z-[121] flex w-full max-w-[560px] flex-col border-l border-[var(--border)] bg-[var(--surface)]/96 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.28)] backdrop-blur-md">
+              <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
+                <div>
+                  <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Dashboard Settings
+                  </div>
+                  <div className="mt-1 text-[1.2rem] font-semibold tracking-[-0.04em] text-[var(--text)]">
+                    Themes, layout presets and camera slots
+                  </div>
+                  <div className="mt-1 text-[0.82rem] leading-6 text-[var(--text-muted)]">
+                    Everything here is saved locally for this operator station.
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-2 text-[0.74rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-alt)]"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 flex-1 space-y-4 overflow-auto pr-1">
+                <section className="grid gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        Appearance
+                      </div>
+                      <div className="mt-1 text-[0.9rem] text-[var(--text)]">Switch the whole dashboard mood without exposing the selector in the top bar.</div>
+                    </div>
+                    <StatusBadge tone="info" label={themes[themeId].label} />
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {(Object.keys(themes) as ThemeId[]).map((id) => (
+                      <ThemeSwatch key={id} id={id} active={themeId === id} onClick={() => setThemeId(id)} />
+                    ))}
+                  </div>
+                </section>
+
+                <section className="grid gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        Layout Presets
+                      </div>
+                      <div className="mt-1 text-[0.9rem] text-[var(--text)]">
+                        Load a ready-made model, then fine tune the existing pages.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge tone={preferences.activePresetId === 'custom' ? 'warning' : 'good'} label={preferences.activePresetId} />
+                      <label className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-3 py-2 text-[0.76rem] text-[var(--text)]">
+                        <input
+                          type="checkbox"
+                          checked={layoutLocked}
+                          onChange={(event) => setLayoutSetting('layoutLocked', event.target.checked)}
+                          className="h-4 w-4 accent-[var(--primary)]"
+                        />
+                        Lock layout
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {layoutPresets.map((preset) => {
+                      const active = preferences.activePresetId === preset.id
+
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => applyLayoutPreset(preset.id as LayoutPresetId)}
+                          disabled={layoutLocked}
+                          className={cn(
+                            'grid gap-2 rounded-[20px] border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                            active
+                              ? 'border-[var(--primary)] bg-[var(--primary-soft)]/76'
+                              : 'border-[var(--border)] bg-[var(--surface-alt)]/76 hover:bg-[var(--surface-alt)]',
+                          )}
+                        >
+                          <div className="text-[0.8rem] font-semibold text-[var(--text)]">{preset.label}</div>
+                          <div className="text-[0.74rem] leading-5 text-[var(--text-muted)]">{preset.description}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="grid gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4 md:grid-cols-2">
+                    <LabeledSelect
+                      label="Data scale"
+                      value={preferences.layout.uiScale}
+                      options={uiScaleOptions.map(({ id, label }) => ({ id, label }))}
+                      onChange={(value) => setLayoutSetting('uiScale', value)}
+                      disabled={layoutLocked}
+                    />
+                    <LabeledSelect
+                      label="Overview layout"
+                      value={preferences.layout.overviewLayout}
+                      options={overviewLayoutOptions}
+                      onChange={(value) => setLayoutSetting('overviewLayout', value)}
+                      disabled={layoutLocked}
+                    />
+                    <LabeledSelect
+                      label="Diagnostics layout"
+                      value={preferences.layout.diagnosticsLayout}
+                      options={diagnosticsLayoutOptions}
+                      onChange={(value) => setLayoutSetting('diagnosticsLayout', value)}
+                      disabled={layoutLocked}
+                    />
+                    <LabeledSelect
+                      label="Systems layout"
+                      value={preferences.layout.systemsLayout}
+                      options={systemsLayoutOptions}
+                      onChange={(value) => setLayoutSetting('systemsLayout', value)}
+                      disabled={layoutLocked}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4">
+                    <label className="flex items-center gap-3 text-[0.84rem] text-[var(--text)]">
+                      <input
+                        type="checkbox"
+                        checked={preferences.layout.showCameraInSystems}
+                        onChange={(event) => setLayoutSetting('showCameraInSystems', event.target.checked)}
+                        disabled={layoutLocked}
+                        className="h-4 w-4 accent-[var(--primary)]"
+                      />
+                      Show camera viewport inside the Systems page when a feed exists
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={resetLayout}
+                      className="rounded-full border border-[var(--border)] bg-[var(--surface)]/76 px-4 py-2 text-[0.74rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface)]"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                </section>
+
+                <section className="grid gap-3">
+                  <div>
+                    <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                      Camera Feeds
+                    </div>
+                    <div className="mt-1 text-[0.9rem] text-[var(--text)]">
+                      Atlas ainda nao publica live view automaticamente, mas o ORION ja aceita stream manual por URL e abre uma viewport dedicada.
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {preferences.cameraFeeds.map((feed) => (
+                      <CameraFeedEditor
+                        key={feed.id}
+                        feed={feed}
+                        onChange={(patch) => updateCameraFeed(feed.id, patch)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </aside>
+          </div>,
+          document.body,
+        )
+      : null
 
   return (
     <>
@@ -214,183 +418,7 @@ export function DashboardSettingsLauncher() {
       >
         <GearIcon />
       </button>
-
-      {open ? (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-[2px]">
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0 h-full w-full cursor-default"
-            aria-label="Close settings overlay"
-          />
-
-          <aside className="absolute inset-y-0 right-0 flex w-full max-w-[560px] flex-col border-l border-[var(--border)] bg-[var(--surface)]/96 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.28)] backdrop-blur-md">
-            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
-              <div>
-                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                  Dashboard Settings
-                </div>
-                <div className="mt-1 text-[1.2rem] font-semibold tracking-[-0.04em] text-[var(--text)]">
-                  Themes, layout presets and camera slots
-                </div>
-                <div className="mt-1 text-[0.82rem] leading-6 text-[var(--text-muted)]">
-                  Everything here is saved locally for this operator station.
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-2 text-[0.74rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-alt)]"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 flex-1 space-y-4 overflow-auto pr-1">
-              <section className="grid gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                      Appearance
-                    </div>
-                    <div className="mt-1 text-[0.9rem] text-[var(--text)]">Switch the whole dashboard mood without exposing the selector in the top bar.</div>
-                  </div>
-                  <StatusBadge tone="info" label={themes[themeId].label} />
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {(Object.keys(themes) as ThemeId[]).map((id) => (
-                    <ThemeSwatch key={id} id={id} active={themeId === id} onClick={() => setThemeId(id)} />
-                  ))}
-                </div>
-              </section>
-
-              <section className="grid gap-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                      Layout Presets
-                    </div>
-                    <div className="mt-1 text-[0.9rem] text-[var(--text)]">
-                      Load a ready-made model, then fine tune the existing pages.
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge tone={preferences.activePresetId === 'custom' ? 'warning' : 'good'} label={preferences.activePresetId} />
-                    <label className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-3 py-2 text-[0.76rem] text-[var(--text)]">
-                      <input
-                        type="checkbox"
-                        checked={layoutLocked}
-                        onChange={(event) => setLayoutSetting('layoutLocked', event.target.checked)}
-                        className="h-4 w-4 accent-[var(--primary)]"
-                      />
-                      Lock layout
-                    </label>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {layoutPresets.map((preset) => {
-                    const active = preferences.activePresetId === preset.id
-
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyLayoutPreset(preset.id as LayoutPresetId)}
-                        disabled={layoutLocked}
-                        className={cn(
-                          'grid gap-2 rounded-[20px] border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                          active
-                            ? 'border-[var(--primary)] bg-[var(--primary-soft)]/76'
-                            : 'border-[var(--border)] bg-[var(--surface-alt)]/76 hover:bg-[var(--surface-alt)]',
-                        )}
-                      >
-                        <div className="text-[0.8rem] font-semibold text-[var(--text)]">{preset.label}</div>
-                        <div className="text-[0.74rem] leading-5 text-[var(--text-muted)]">{preset.description}</div>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                <div className="grid gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4 md:grid-cols-2">
-                  <LabeledSelect
-                    label="Data scale"
-                    value={preferences.layout.uiScale}
-                    options={uiScaleOptions.map(({ id, label }) => ({ id, label }))}
-                    onChange={(value) => setLayoutSetting('uiScale', value)}
-                    disabled={layoutLocked}
-                  />
-                  <LabeledSelect
-                    label="Overview layout"
-                    value={preferences.layout.overviewLayout}
-                    options={overviewLayoutOptions}
-                    onChange={(value) => setLayoutSetting('overviewLayout', value)}
-                    disabled={layoutLocked}
-                  />
-                  <LabeledSelect
-                    label="Diagnostics layout"
-                    value={preferences.layout.diagnosticsLayout}
-                    options={diagnosticsLayoutOptions}
-                    onChange={(value) => setLayoutSetting('diagnosticsLayout', value)}
-                    disabled={layoutLocked}
-                  />
-                  <LabeledSelect
-                    label="Systems layout"
-                    value={preferences.layout.systemsLayout}
-                    options={systemsLayoutOptions}
-                    onChange={(value) => setLayoutSetting('systemsLayout', value)}
-                    disabled={layoutLocked}
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4">
-                  <label className="flex items-center gap-3 text-[0.84rem] text-[var(--text)]">
-                    <input
-                      type="checkbox"
-                      checked={preferences.layout.showCameraInSystems}
-                      onChange={(event) => setLayoutSetting('showCameraInSystems', event.target.checked)}
-                      disabled={layoutLocked}
-                      className="h-4 w-4 accent-[var(--primary)]"
-                    />
-                    Show camera viewport inside the Systems page when a feed exists
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={resetLayout}
-                    className="rounded-full border border-[var(--border)] bg-[var(--surface)]/76 px-4 py-2 text-[0.74rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface)]"
-                  >
-                    Reset to default
-                  </button>
-                </div>
-              </section>
-
-              <section className="grid gap-3">
-                <div>
-                  <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                    Camera Feeds
-                  </div>
-                  <div className="mt-1 text-[0.9rem] text-[var(--text)]">
-                    Atlas ainda nao publica live view automaticamente, mas o ORION ja aceita stream manual por URL e abre uma viewport dedicada.
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  {preferences.cameraFeeds.map((feed) => (
-                    <CameraFeedEditor
-                      key={feed.id}
-                      feed={feed}
-                      onChange={(patch) => updateCameraFeed(feed.id, patch)}
-                    />
-                  ))}
-                </div>
-              </section>
-            </div>
-          </aside>
-        </div>
-      ) : null}
+      {settingsOverlay}
     </>
   )
 }

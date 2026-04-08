@@ -30,6 +30,7 @@ if (-not $nodeDir) {
 $env:Path = "$nodeDir;$env:Path"
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 $npmCmd = Join-Path $nodeDir "npm.cmd"
+$electronBuilderCmd = Join-Path $frontendDir "node_modules\.bin\electron-builder.cmd"
 
 if (-not (Test-Path $npmCmd)) {
     $npmCmd = "npm.cmd"
@@ -37,8 +38,8 @@ if (-not (Test-Path $npmCmd)) {
 
 Set-Location $frontendDir
 
-if ($Install -or -not (Test-Path (Join-Path $frontendDir "node_modules"))) {
-    & $npmCmd install
+if ($Install -or -not (Test-Path (Join-Path $frontendDir "node_modules")) -or -not (Test-Path $electronBuilderCmd)) {
+    & $npmCmd install --include=dev
     if ($LASTEXITCODE -ne 0) {
         throw "Falha ao instalar dependencias do frontend."
     }

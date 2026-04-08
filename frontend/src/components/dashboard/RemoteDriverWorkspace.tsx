@@ -130,6 +130,51 @@ function ActionButton({
   )
 }
 
+function HoldDriveButton({
+  label,
+  hint,
+  accent,
+  onHoldStart,
+  onHoldEnd,
+}: {
+  label: string
+  hint: string
+  accent: 'primary' | 'accent' | 'warning'
+  onHoldStart: () => void
+  onHoldEnd: () => void
+}) {
+  const accentClass =
+    accent === 'primary'
+      ? 'border-[var(--primary)]/28 bg-[var(--primary-soft)]/78 hover:bg-[var(--primary-soft)]'
+      : accent === 'accent'
+        ? 'border-[var(--accent)]/28 bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_16%,transparent)]'
+        : 'border-[var(--warning)]/28 bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] hover:bg-[color-mix(in_srgb,var(--warning)_16%,transparent)]'
+
+  return (
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        onHoldStart()
+      }}
+      onPointerUp={(event) => {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+        onHoldEnd()
+      }}
+      onPointerCancel={onHoldEnd}
+      onLostPointerCapture={onHoldEnd}
+      className={cn(
+        'rounded-[18px] border px-4 py-3 text-left text-[var(--text)] transition-colors select-none touch-none',
+        accentClass,
+      )}
+    >
+      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em]">{label}</div>
+      <div className="mt-1 text-[0.78rem] leading-5 opacity-90">{hint}</div>
+    </button>
+  )
+}
+
 const driverActions: Array<{
   action: RemoteDriverAction
   label: string
@@ -179,6 +224,7 @@ export function RemoteDriverWorkspace({ active }: { active: boolean }) {
     preview,
     commandState,
     dispatchAction,
+    setPanelDriveState,
   } = useRemoteDriver(active)
 
   return (
@@ -314,6 +360,100 @@ export function RemoteDriverWorkspace({ active }: { active: boolean }) {
               <AxisMeter label="Rotate / Z" value={preview.z} />
             </div>
 
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
+              <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/78 px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                      On-screen Teleop Pad
+                    </div>
+                    <div className="mt-1 text-[0.84rem] leading-6 text-[var(--text-muted)]">
+                      Hold a button to keep sending that motion. Useful when you do not have a gamepad plugged in.
+                    </div>
+                  </div>
+                  <StatusBadge tone={preview.inputSource === 'panel' || preview.inputSource === 'hybrid' ? 'info' : 'neutral'} label={preview.inputSource === 'panel' || preview.inputSource === 'hybrid' ? 'panel active' : 'panel idle'} />
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.74fr)]">
+                  <div className="grid gap-3">
+                    <div className="grid justify-center">
+                      <HoldDriveButton
+                        label="Forward"
+                        hint="Hold to drive ahead."
+                        accent="primary"
+                        onHoldStart={() => setPanelDriveState({ x: 0, y: 0.78, z: 0 })}
+                        onHoldEnd={() => setPanelDriveState(null)}
+                      />
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <HoldDriveButton
+                        label="Left"
+                        hint="Hold to strafe left."
+                        accent="accent"
+                        onHoldStart={() => setPanelDriveState({ x: -0.72, y: 0, z: 0 })}
+                        onHoldEnd={() => setPanelDriveState(null)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPanelDriveState(null)}
+                        className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/80 px-4 py-3 text-left text-[var(--text)] transition-colors hover:bg-[var(--surface)]"
+                      >
+                        <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em]">Stop</div>
+                        <div className="mt-1 text-[0.78rem] leading-5 text-[var(--text-muted)]">Send a zeroed packet immediately.</div>
+                      </button>
+                      <HoldDriveButton
+                        label="Right"
+                        hint="Hold to strafe right."
+                        accent="accent"
+                        onHoldStart={() => setPanelDriveState({ x: 0.72, y: 0, z: 0 })}
+                        onHoldEnd={() => setPanelDriveState(null)}
+                      />
+                    </div>
+
+                    <div className="grid justify-center">
+                      <HoldDriveButton
+                        label="Reverse"
+                        hint="Hold to back away."
+                        accent="primary"
+                        onHoldStart={() => setPanelDriveState({ x: 0, y: -0.68, z: 0 })}
+                        onHoldEnd={() => setPanelDriveState(null)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <HoldDriveButton
+                      label="Rotate Left"
+                      hint="Hold to yaw left in place."
+                      accent="warning"
+                      onHoldStart={() => setPanelDriveState({ x: 0, y: 0, z: -0.62 })}
+                      onHoldEnd={() => setPanelDriveState(null)}
+                    />
+                    <HoldDriveButton
+                      label="Rotate Right"
+                      hint="Hold to yaw right in place."
+                      accent="warning"
+                      onHoldStart={() => setPanelDriveState({ x: 0, y: 0, z: 0.62 })}
+                      onHoldEnd={() => setPanelDriveState(null)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/78 px-4 py-4">
+                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                  Teleop Checklist
+                </div>
+                <div className="mt-3 grid gap-2 text-[0.82rem] leading-6 text-[var(--text-muted)]">
+                  <div>1. Open this workspace and click `Arm controls`.</div>
+                  <div>2. Click `Enable Teleop` so the robot accepts remote packets.</div>
+                  <div>3. Use the on-screen pad, `W A S D` plus `Q / E`, or a gamepad.</div>
+                  <div>4. Keep this window focused. Losing focus disarms teleop for safety.</div>
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,0.92fr)]">
               <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/78 px-4 py-4">
                 <div className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
@@ -322,6 +462,7 @@ export function RemoteDriverWorkspace({ active }: { active: boolean }) {
                 <div className="mt-3 grid gap-2 text-[0.82rem] leading-6 text-[var(--text-muted)]">
                   <div>Left stick controls strafe and forward motion.</div>
                   <div>Right stick X controls rotation.</div>
+                  <div>On-screen pad buttons send held motion packets for quick teleop tests.</div>
                   <div>Keyboard fallback uses `W A S D` for translation and `Q / E` for rotation.</div>
                   <div>When ORION loses focus, controls disarm and Atlas stops receiving live packets.</div>
                 </div>

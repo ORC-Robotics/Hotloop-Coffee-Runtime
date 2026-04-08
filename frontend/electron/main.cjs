@@ -1,7 +1,42 @@
-const { app, BrowserWindow, dialog, shell } = require('electron')
+const electronModule = require('electron')
 const { spawn } = require('node:child_process')
 const { appendFileSync, existsSync, mkdirSync } = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
+
+function appendBootstrapLine(message) {
+  const line = `[${new Date().toISOString()}] ${message}`
+
+  try {
+    appendFileSync(path.join(os.tmpdir(), 'orion-electron-bootstrap.log'), `${line}\n`, 'utf8')
+  } catch {
+    // Ignore bootstrap logging failures.
+  }
+}
+
+if (
+  (!electronModule || typeof electronModule === 'string' || !electronModule.app) &&
+  process.env.ORION_ELECTRON_RELAUNCHED !== '1'
+) {
+  appendBootstrapLine(
+    `electron module unavailable; relaunching without ELECTRON_RUN_AS_NODE=${process.env.ELECTRON_RUN_AS_NODE ?? 'unset'}`,
+  )
+
+  const relaunchedEnv = { ...process.env, ORION_ELECTRON_RELAUNCHED: '1' }
+  delete relaunchedEnv.ELECTRON_RUN_AS_NODE
+
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    detached: true,
+    env: relaunchedEnv,
+    stdio: 'ignore',
+    windowsHide: false,
+  })
+
+  child.unref()
+  process.exit(0)
+}
+
+const { app, BrowserWindow, dialog, shell } = electronModule
 
 const BRIDGE_HOST = process.env.ORION_BRIDGE_HOST ?? '127.0.0.1'
 const BRIDGE_PORT = Number.parseInt(process.env.ORION_BRIDGE_PORT ?? '8765', 10)
@@ -15,6 +50,18 @@ let bridgeProcess = null
 let bridgeOwnedByApp = false
 let appIsQuitting = false
 
+const singleInstanceLock = app.requestSingleInstanceLock()
+
+if (!singleInstanceLock) {
+  appendBootstrapLine('another ORION Console instance is already running; exiting duplicate process')
+  app.quit()
+  process.exit(0)
+}
+
+function getBootstrapLogPath() {
+  return path.join(os.tmpdir(), 'orion-electron-bootstrap.log')
+}
+
 function getRuntimeLogPath() {
   const userDataDir = app.getPath('userData')
   mkdirSync(userDataDir, { recursive: true })
@@ -26,6 +73,12 @@ function logRuntime(message) {
   console.log(line)
 
   try {
+    appendFileSync(getBootstrapLogPath(), `${line}\n`, 'utf8')
+  } catch {
+    // Ignore bootstrap logging failures.
+  }
+
+  try {
     appendFileSync(getRuntimeLogPath(), `${line}\n`, 'utf8')
   } catch {
     // Ignore logging failures so bootstrap never depends on filesystem writes.
@@ -33,6 +86,20 @@ function logRuntime(message) {
 }
 
 app.setName('ORION Console')
+app.on('second-instance', () => {
+  logRuntime('second-instance received')
+
+  if (!mainWindow) {
+    return
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 function resolveBridgeScriptPath() {
   return path.resolve(__dirname, '..', '..', 'telemetry_bridge.py')
@@ -264,6 +331,7 @@ function createMainWindow() {
     minHeight: 760,
     autoHideMenuBar: true,
     show: false,
+    paintWhenInitiallyHidden: true,
     backgroundColor: '#0f1418',
     webPreferences: {
       contextIsolation: true,
@@ -297,12 +365,22 @@ function createMainWindow() {
     logRuntime(`renderer process gone: reason=${details.reason} exitCode=${details.exitCode}`)
   })
 
+  window.on('closed', () => {
+    logRuntime('main window closed')
+  })
+
   if (app.isPackaged) {
     logRuntime(`loading packaged renderer from ${resolveRendererEntry()}`)
-    void window.loadFile(resolveRendererEntry())
+    void window.loadFile(resolveRendererEntry()).catch((error) => {
+      logRuntime(`loadFile rejected: ${error.stack ?? error.message}`)
+      dialog.showErrorBox('Falha ao carregar interface', error.message)
+    })
   } else {
     logRuntime(`loading dev renderer from ${DEV_SERVER_URL}`)
-    void window.loadURL(DEV_SERVER_URL)
+    void window.loadURL(DEV_SERVER_URL).catch((error) => {
+      logRuntime(`loadURL rejected: ${error.stack ?? error.message}`)
+      dialog.showErrorBox('Falha ao carregar interface', error.message)
+    })
   }
 
   return window
@@ -315,16 +393,23 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(async () => {
-  logRuntime('app ready')
-  await startBridgeIfNeeded()
-  mainWindow = createMainWindow()
+  try {
+    logRuntime('app ready')
+    await startBridgeIfNeeded()
+    mainWindow = createMainWindow()
 
-  app.on('activate', () => {
-    logRuntime('app activate event')
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createMainWindow()
-    }
-  })
+    app.on('activate', () => {
+      logRuntime('app activate event')
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createMainWindow()
+      }
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error)
+    logRuntime(`whenReady bootstrap failed: ${message}`)
+    dialog.showErrorBox('Falha ao iniciar ORION Console', message)
+    app.quit()
+  }
 })
 
 app.on('window-all-closed', () => {

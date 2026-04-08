@@ -24,7 +24,11 @@ NT_TYPE_BOOLEAN_ARRAY = 0x10
 NT_TYPE_DOUBLE_ARRAY = 0x20
 NT_TYPE_STRING_ARRAY = 0x40
 EDITABLE_VALUE_KINDS = {"number", "boolean", "string"}
-BATTERY_NOMINAL_CAPACITY_AH = 18.0
+BATTERY_USABLE_CAPACITY_AH = 10.5
+BATTERY_ESTIMATE_FULL_V = 12.6
+BATTERY_ESTIMATE_EMPTY_V = 11.1
+BATTERY_IDLE_DRAW_FLOOR_A = 8.0
+BATTERY_ACTIVE_DRAW_FLOOR_A = 22.0
 REMOTE_DRIVER_ACTIONS = {
     "enable_teleop",
     "enable_auto",
@@ -54,6 +58,29 @@ def normalize_angle_delta(value: float) -> float:
     while value < -180.0:
         value += 360.0
     return value
+
+
+def estimate_battery_runtime_minutes(
+    voltage_v: float,
+    current_a: float,
+    robot_enabled: bool,
+) -> tuple[float, float | None]:
+    if voltage_v <= 0:
+        return 0.0, None
+
+    voltage_span = BATTERY_ESTIMATE_FULL_V - BATTERY_ESTIMATE_EMPTY_V
+    if voltage_span <= 0:
+        return 0.0, None
+
+    state_of_charge = max(0.0, min(1.0, (voltage_v - BATTERY_ESTIMATE_EMPTY_V) / voltage_span))
+    if current_a <= 0.25 or state_of_charge <= 0:
+        return state_of_charge, None
+
+    minimum_operational_draw = BATTERY_ACTIVE_DRAW_FLOOR_A if robot_enabled else BATTERY_IDLE_DRAW_FLOOR_A
+    effective_current = max(current_a, minimum_operational_draw)
+    remaining_ah = state_of_charge * BATTERY_USABLE_CAPACITY_AH
+    runtime_min = max(0.0, (remaining_ah / effective_current) * 60.0)
+    return state_of_charge, runtime_min
 
 
 def classify_scope(key: str) -> str:
@@ -654,11 +681,11 @@ class TelemetryBridge:
         battery_voltage = self._get_number_alias("Telemetry/Robot/Battery Voltage", default=0.0)
         battery_current = self._get_number_alias("Telemetry/Robot/Battery Current", default=0.0)
         battery_power = battery_voltage * battery_current
-        battery_soc = max(0.0, min(1.0, (battery_voltage - 10.4) / 2.4)) if battery_voltage > 0 else 0.0
-        estimated_runtime_min = None
-        if battery_current > 0.5 and battery_voltage > 0:
-            remaining_wh = battery_soc * BATTERY_NOMINAL_CAPACITY_AH * 12.0
-            estimated_runtime_min = max(0.0, (remaining_wh / max(battery_power, 1.0)) * 60.0)
+        battery_soc, estimated_runtime_min = estimate_battery_runtime_minutes(
+            battery_voltage,
+            battery_current,
+            robot_enabled,
+        )
 
         live_yaw_deg = self._get_number_alias(
             "Telemetry/NavX/Filtered Yaw (deg)",

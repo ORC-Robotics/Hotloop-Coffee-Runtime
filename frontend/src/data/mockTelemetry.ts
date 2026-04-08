@@ -20,6 +20,35 @@ const SCENARIOS: ScenarioFrame[] = [
   { id: 'scan-instability', label: 'Temporary scan instability', durationMs: 7_000 },
 ]
 
+const BATTERY_USABLE_CAPACITY_AH = 10.5
+const BATTERY_ESTIMATE_FULL_V = 12.6
+const BATTERY_ESTIMATE_EMPTY_V = 11.1
+const BATTERY_IDLE_DRAW_FLOOR_A = 8
+const BATTERY_ACTIVE_DRAW_FLOOR_A = 22
+
+function estimateBatteryRuntimeMinutes(voltageV: number, currentA: number, robotEnabled: boolean) {
+  if (voltageV <= 0) {
+    return { stateOfCharge: 0, estimatedRuntimeMin: null as number | null }
+  }
+
+  const voltageSpan = BATTERY_ESTIMATE_FULL_V - BATTERY_ESTIMATE_EMPTY_V
+  const stateOfCharge = clamp((voltageV - BATTERY_ESTIMATE_EMPTY_V) / voltageSpan, 0, 1)
+
+  if (currentA <= 0.25 || stateOfCharge <= 0) {
+    return { stateOfCharge, estimatedRuntimeMin: null as number | null }
+  }
+
+  const effectiveCurrent = Math.max(
+    currentA,
+    robotEnabled ? BATTERY_ACTIVE_DRAW_FLOOR_A : BATTERY_IDLE_DRAW_FLOOR_A,
+  )
+
+  return {
+    stateOfCharge,
+    estimatedRuntimeMin: Math.max(0, (stateOfCharge * BATTERY_USABLE_CAPACITY_AH / effectiveCurrent) * 60),
+  }
+}
+
 export function createBaseSnapshot(): TelemetrySnapshot {
   return {
     timestamp: new Date().toISOString(),
@@ -418,11 +447,13 @@ export function generateMockTelemetryFrame(timeMs: number): TelemetrySnapshot {
   }
 
   base.battery.powerW = base.battery.voltageV * base.battery.currentA
-  base.battery.stateOfCharge = Math.max(0, Math.min(1, (base.battery.voltageV - 10.4) / 2.4))
-  base.battery.estimatedRuntimeMin =
-    base.battery.currentA > 0.5
-      ? (base.battery.stateOfCharge * 18 * 12) / Math.max(base.battery.powerW, 1) * 60
-      : null
+  const batteryEstimate = estimateBatteryRuntimeMinutes(
+    base.battery.voltageV,
+    base.battery.currentA,
+    base.connection.online,
+  )
+  base.battery.stateOfCharge = batteryEstimate.stateOfCharge
+  base.battery.estimatedRuntimeMin = batteryEstimate.estimatedRuntimeMin
 
   return base
 }

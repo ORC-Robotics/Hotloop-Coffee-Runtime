@@ -38,6 +38,13 @@ type KeyboardState = {
   rotateRight: boolean
 }
 
+type PanelDriveState = {
+  x: number
+  y: number
+  z: number
+  active: boolean
+}
+
 type InputSample = DriverPreview
 
 function clampUnit(value: number) {
@@ -100,6 +107,15 @@ function createEmptyKeyboardState(): KeyboardState {
     reverse: false,
     rotateLeft: false,
     rotateRight: false,
+  }
+}
+
+function createIdlePanelDriveState(): PanelDriveState {
+  return {
+    x: 0,
+    y: 0,
+    z: 0,
+    active: false,
   }
 }
 
@@ -178,24 +194,33 @@ function readGamepadAxes(gamepad: Gamepad | null) {
   }
 }
 
-function combineInputs(gamepadState: ReturnType<typeof readGamepadAxes>, keyboardState: ReturnType<typeof readKeyboardAxes>): InputSample {
-  let inputSource = 'idle'
+function combineInputs(
+  gamepadState: ReturnType<typeof readGamepadAxes>,
+  keyboardState: ReturnType<typeof readKeyboardAxes>,
+  panelState: PanelDriveState,
+): InputSample {
+  const activeSources: string[] = []
 
-  if (gamepadState.active && keyboardState.active) {
-    inputSource = 'hybrid'
-  } else if (gamepadState.active) {
-    inputSource = 'gamepad'
-  } else if (keyboardState.active) {
-    inputSource = 'keyboard'
+  if (gamepadState.active) {
+    activeSources.push('gamepad')
   }
+  if (keyboardState.active) {
+    activeSources.push('keyboard')
+  }
+  if (panelState.active) {
+    activeSources.push('panel')
+  }
+
+  const inputSource =
+    activeSources.length === 0 ? 'idle' : activeSources.length === 1 ? activeSources[0] : 'hybrid'
 
   return {
     gamepadConnected: gamepadState.connected,
     gamepadLabel: gamepadState.label,
     inputSource,
-    x: clampUnit(gamepadState.x + keyboardState.x),
-    y: clampUnit(gamepadState.y + keyboardState.y),
-    z: clampUnit(gamepadState.z + keyboardState.z),
+    x: clampUnit(gamepadState.x + keyboardState.x + panelState.x),
+    y: clampUnit(gamepadState.y + keyboardState.y + panelState.y),
+    z: clampUnit(gamepadState.z + keyboardState.z + panelState.z),
   }
 }
 
@@ -221,6 +246,7 @@ export function useRemoteDriver(active: boolean) {
     message: 'Arm controls, then enable teleop to drive from ORION.',
   })
   const keyboardStateRef = useRef<KeyboardState>(createEmptyKeyboardState())
+  const panelDriveStateRef = useRef<PanelDriveState>(createIdlePanelDriveState())
   const preferredGamepadIndexRef = useRef<number | null>(null)
   const controlsArmedRef = useRef(controlsArmed)
   const gyroAssistRef = useRef(gyroAssist)
@@ -242,6 +268,7 @@ export function useRemoteDriver(active: boolean) {
       wasTransmittingRef.current = false
       setControlsArmed(false)
       keyboardStateRef.current = createEmptyKeyboardState()
+      panelDriveStateRef.current = createIdlePanelDriveState()
       setPreview(createIdlePreview())
       return
     }
@@ -330,6 +357,7 @@ export function useRemoteDriver(active: boolean) {
 
     const handleBlur = () => {
       keyboardStateRef.current = createEmptyKeyboardState()
+      panelDriveStateRef.current = createIdlePanelDriveState()
       setControlsArmed(false)
       setCommandState({
         tone: 'warning',
@@ -379,7 +407,11 @@ export function useRemoteDriver(active: boolean) {
       const selectedGamepad = selectGamepad(preferredGamepadIndexRef.current)
       const gamepadState = readGamepadAxes(selectedGamepad)
       preferredGamepadIndexRef.current = gamepadState.index
-      const inputSample = combineInputs(gamepadState, readKeyboardAxes(keyboardStateRef.current))
+      const inputSample = combineInputs(
+        gamepadState,
+        readKeyboardAxes(keyboardStateRef.current),
+        panelDriveStateRef.current,
+      )
 
       startTransition(() => {
         setPreview(inputSample)
@@ -498,6 +530,17 @@ export function useRemoteDriver(active: boolean) {
     }
   }
 
+  const setPanelDriveState = (next: Omit<PanelDriveState, 'active'> | null) => {
+    panelDriveStateRef.current = next
+      ? {
+          x: applyDeadband(next.x),
+          y: applyDeadband(next.y),
+          z: applyDeadband(next.z),
+          active: Math.abs(next.x) > 0 || Math.abs(next.y) > 0 || Math.abs(next.z) > 0,
+        }
+      : createIdlePanelDriveState()
+  }
+
   return {
     remoteDriver,
     bridgeStatus,
@@ -508,5 +551,6 @@ export function useRemoteDriver(active: boolean) {
     preview,
     commandState,
     dispatchAction,
+    setPanelDriveState,
   }
 }

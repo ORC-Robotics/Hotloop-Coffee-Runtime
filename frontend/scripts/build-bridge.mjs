@@ -10,6 +10,9 @@ const frontendDir = path.resolve(__dirname, '..')
 const repoRoot = path.resolve(frontendDir, '..')
 const bridgeSource = path.join(repoRoot, 'telemetry_bridge.py')
 const requirementsPath = path.join(repoRoot, 'requirements.txt')
+const projectVenvPython = process.platform === 'win32'
+  ? path.join(repoRoot, '.venv', 'Scripts', 'python.exe')
+  : path.join(repoRoot, '.venv', 'bin', 'python')
 const bridgeDistDir = path.join(frontendDir, 'bridge-dist')
 const pyInstallerRoot = path.join(frontendDir, '.pyinstaller')
 const pyInstallerWorkDir = path.join(pyInstallerRoot, 'build')
@@ -56,6 +59,10 @@ function canRun(command, args = []) {
 function resolvePythonLauncher() {
   if (process.env.ORION_PYTHON_EXECUTABLE) {
     return { command: process.env.ORION_PYTHON_EXECUTABLE, args: [] }
+  }
+
+  if (existsSync(projectVenvPython)) {
+    return { command: projectVenvPython, args: [] }
   }
 
   if (process.platform === 'win32') {

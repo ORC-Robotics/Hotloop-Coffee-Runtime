@@ -119,7 +119,7 @@ export function BatteryPanel({ battery, history }: BatteryPanelProps) {
             ['Voltage', battery.voltageV > 0 ? formatVoltage(battery.voltageV, 2) : '--', 'pack input now'],
             ['Current', battery.currentA > 0 ? formatCurrent(battery.currentA, 1) : '--', 'instantaneous draw'],
             ['Power', battery.powerW > 0 ? formatPower(battery.powerW, 0) : '--', 'electrical load'],
-            ['Est. runtime', formatDurationMinutes(battery.estimatedRuntimeMin), 'heuristic under current load'],
+            ['Est. runtime', formatDurationMinutes(battery.estimatedRuntimeMin), 'conservative estimate under minimum drivetrain load'],
           ].map(([label, value, detail]) => (
             <div key={label} className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
               <div className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
