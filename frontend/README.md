@@ -1,4 +1,4 @@
-# AMR Reactive Telemetry Dashboard
+# ORION Console Frontend
 
 Dashboard de telemetria para robô móvel construído com React, Vite, TypeScript e Tailwind CSS.
 
