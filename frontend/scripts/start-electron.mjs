@@ -13,12 +13,20 @@ const electronBinary =
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 
-const child = spawn(electronBinary, ['.'], {
-  cwd: frontendDir,
-  env,
-  stdio: 'inherit',
-  windowsHide: false,
-})
+const child =
+  process.platform === 'win32'
+    ? spawn('cmd.exe', ['/d', '/s', '/c', electronBinary, '.'], {
+        cwd: frontendDir,
+        env,
+        stdio: 'inherit',
+        windowsHide: false,
+      })
+    : spawn(electronBinary, ['.'], {
+        cwd: frontendDir,
+        env,
+        stdio: 'inherit',
+        windowsHide: false,
+      })
 
 child.on('exit', (code, signal) => {
   if (signal) {
