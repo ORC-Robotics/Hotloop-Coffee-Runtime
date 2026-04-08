@@ -73,6 +73,8 @@ Hoje o workflow gera:
 - Windows: `.exe` portable
 - Linux: `.AppImage` e `.deb`
 
+O build Linux é feito em uma base Ubuntu mais conservadora para reduzir problemas de compatibilidade com `glibc` em máquinas Linux de usuários finais.
+
 Fluxo recomendado para novas versões:
 
 1. Atualize a versão em `frontend/package.json`.

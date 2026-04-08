@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build-desktop:
     strategy:
@@ -20,9 +23,9 @@ jobs:
             python-version: "3.13"
             artifact-name: ORION-Console-windows-portable
             asset-glob: frontend/release/ORION Console *.exe
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux
-            python-version: "3.13"
+            python-version: "3.12"
             artifact-name: ORION-Console-linux
             asset-glob: |
               frontend/release/*.AppImage
