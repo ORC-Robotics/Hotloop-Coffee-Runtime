@@ -1,23 +1,14 @@
 import {
-  createContext,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type PropsWithChildren,
 } from 'react'
-import { themes, type ThemeDefinition, type ThemeId } from './themes'
+import { ThemeContext } from './themeContextStore'
+import { themes, type ThemeId } from './themes'
 import { toCssVariables } from './tokens'
 
-interface ThemeContextValue {
-  theme: ThemeDefinition
-  themeId: ThemeId
-  setThemeId: (themeId: ThemeId) => void
-}
-
 const STORAGE_KEY = 'amr-telemetry-theme'
-
-const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 export function ThemeProvider({ children }: PropsWithChildren) {
   const [themeId, setThemeId] = useState<ThemeId>(() => {
@@ -50,14 +41,4 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-}
-
-export function useThemeContext() {
-  const context = useContext(ThemeContext)
-
-  if (!context) {
-    throw new Error('useThemeContext must be used inside ThemeProvider')
-  }
-
-  return context
 }

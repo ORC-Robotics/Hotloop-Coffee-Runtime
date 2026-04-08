@@ -1,4 +1,5 @@
 .venv/
+.venv-bridge-build/
 __pycache__/
 *.pyc
 *.pyo
@@ -12,6 +13,9 @@ bridge.err.log
 
 frontend/node_modules/
 frontend/dist/
+frontend/bridge-dist/
+frontend/.pyinstaller/
+frontend/release/
 frontend/.env
 frontend/.env.local
 frontend/.env.*.local

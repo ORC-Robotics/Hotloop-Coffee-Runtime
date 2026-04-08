@@ -1,6 +1,6 @@
 param(
-    [switch]$Build,
-    [switch]$Install
+    [switch]$Install,
+    [switch]$Build
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +28,7 @@ if (-not $nodeDir) {
 }
 
 $env:Path = "$nodeDir;$env:Path"
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 $npmCmd = Join-Path $nodeDir "npm.cmd"
 
 if (-not (Test-Path $npmCmd)) {
@@ -44,11 +45,11 @@ if ($Install -or -not (Test-Path (Join-Path $frontendDir "node_modules"))) {
 }
 
 if ($Build) {
-    & $npmCmd run build
+    & $npmCmd run build:desktop
     if ($LASTEXITCODE -ne 0) {
-        throw "Falha no build do frontend."
+        throw "Falha ao gerar o pacote desktop."
     }
     exit 0
 }
 
-& $npmCmd run dev
+& $npmCmd run desktop:dev

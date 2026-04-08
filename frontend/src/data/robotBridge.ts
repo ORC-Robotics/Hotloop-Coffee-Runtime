@@ -6,9 +6,24 @@ import type {
   TelemetrySnapshot,
 } from '../types/telemetry'
 
+function resolveBridgeBaseUrl() {
+  if (import.meta.env.VITE_TELEMETRY_API_URL_BASE) {
+    return import.meta.env.VITE_TELEMETRY_API_URL_BASE
+  }
+
+  if (window.orionDesktop?.bridgeBaseUrl) {
+    return window.orionDesktop.bridgeBaseUrl
+  }
+
+  if (window.location.protocol === 'file:') {
+    return 'http://127.0.0.1:8765'
+  }
+
+  return `${window.location.protocol}//${window.location.hostname || '127.0.0.1'}:8765`
+}
+
 const BRIDGE_BASE_URL =
-  import.meta.env.VITE_TELEMETRY_API_URL_BASE ??
-  `${window.location.protocol}//${window.location.hostname || '127.0.0.1'}:8765`
+  resolveBridgeBaseUrl()
 
 const TELEMETRY_URL = `${BRIDGE_BASE_URL}/api/telemetry`
 const CONTROL_MODE_URL = `${BRIDGE_BASE_URL}/api/control-mode`
