@@ -1,0 +1,69 @@
+name: Reportar bug
+description: Registrar um problema de comportamento, integração ou visual.
+title: "[Bug] "
+labels:
+  - bug
+  - type:task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por registrar o problema.
+
+        Preencha os pontos abaixo para facilitar a reprodução e a correção.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Resumo
+      description: O que está acontecendo de errado?
+      placeholder: Descreva o problema de forma objetiva.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir
+      description: Liste os passos para reproduzir o bug.
+      placeholder: |
+        1. Abrir...
+        2. Conectar...
+        3. Clicar...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+      description: O que deveria acontecer?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportamento atual
+      description: O que aconteceu na prática?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área afetada
+      options:
+        - frontend
+        - bridge
+        - integração com o robô
+        - documentação
+        - visual/UX
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ambiente
+      description: Sistema, navegador, terminal, Wi-Fi do robô, bridge ativo, etc.
+      placeholder: Windows 11, Chrome, bridge ativo, robô no Wi-Fi...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, prints ou contexto adicional
+      description: Cole logs, prints ou qualquer observação útil.

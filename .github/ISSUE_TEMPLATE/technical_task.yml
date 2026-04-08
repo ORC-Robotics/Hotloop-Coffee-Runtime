@@ -1,0 +1,55 @@
+name: Tarefa técnica
+description: Registrar uma tarefa de manutenção, arquitetura, contrato ou infraestrutura.
+title: "[Task] "
+labels:
+  - type:task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use este template para trabalho técnico que não é bug puro nem feature de produto.
+  - type: input
+    id: objective
+    attributes:
+      label: Objetivo
+      description: Qual é o resultado esperado desta tarefa?
+      placeholder: Formalizar contrato do bridge...
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Escopo
+      description: O que entra e o que não entra nesta tarefa?
+      placeholder: |
+        Entra:
+        - ...
+
+        Não entra:
+        - ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área principal
+      options:
+        - frontend
+        - bridge
+        - integração com o robô
+        - documentação
+        - arquitetura
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critérios de aceite
+      description: Como saberemos que esta tarefa terminou bem?
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependências ou bloqueios
+      description: Alguma outra issue, decisão ou integração depende disso?
