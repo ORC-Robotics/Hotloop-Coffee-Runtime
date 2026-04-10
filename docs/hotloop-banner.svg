@@ -27,13 +27,13 @@
   <g opacity="0.88">
     <path d="M312 88H396" stroke="#344154" stroke-width="2" stroke-linecap="round"/>
     <path d="M1170 88H1328" stroke="#344154" stroke-width="2" stroke-linecap="round"/>
-    <path d="M1084 246H1328" stroke="#344154" stroke-width="2" stroke-linecap="round"/>
+    <path d="M1084 278H1328" stroke="#344154" stroke-width="2" stroke-linecap="round"/>
   </g>
 
   <g>
     <rect x="68" y="74" width="182" height="182" rx="40" fill="url(#logoFrame)" stroke="#344154" stroke-width="2"/>
     <rect x="84" y="90" width="150" height="150" rx="32" fill="#0A0D12" stroke="#242A34"/>
-    <image href="../frontend/src/assets/app-logo-official.png" x="96" y="86" width="126" height="160" preserveAspectRatio="xMidYMid meet"/>
+    <image href="https://raw.githubusercontent.com/ORC-Robotics/Hotloop-Coffee-Runtime/main/frontend/src/assets/app-logo-official.png" x="96" y="86" width="126" height="160" preserveAspectRatio="xMidYMid meet"/>
   </g>
 
   <g>
@@ -44,8 +44,11 @@
 
   <text x="288" y="178" fill="#FFFFFF" font-family="'Archivo Black', 'Arial Black', sans-serif" font-size="98" letter-spacing="-0.06em">Hotloop</text>
   <text x="292" y="220" fill="#8F98AA" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="0.16em">OPERATOR TELEMETRY CONSOLE</text>
-  <text x="292" y="264" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="24">
-    Live telemetry, configurable workspaces, simulation mode, and desktop delivery for Windows and Linux.
+  <text x="292" y="262" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="22">
+    Live telemetry and configurable workspaces.
+  </text>
+  <text x="292" y="292" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="22">
+    Simulation mode and desktop delivery for Windows and Linux.
   </text>
 
   <g>
@@ -55,13 +58,13 @@
   </g>
 
   <g>
-    <rect x="942" y="220" width="116" height="42" rx="21" fill="#101317" stroke="#242A34"/>
-    <text x="972" y="247" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Desktop</text>
+    <rect x="942" y="252" width="116" height="42" rx="21" fill="#101317" stroke="#242A34"/>
+    <text x="972" y="279" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Desktop</text>
 
-    <rect x="1074" y="220" width="134" height="42" rx="21" fill="#101317" stroke="#242A34"/>
-    <text x="1108" y="247" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Simulation</text>
+    <rect x="1074" y="252" width="134" height="42" rx="21" fill="#101317" stroke="#242A34"/>
+    <text x="1108" y="279" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Simulation</text>
 
-    <rect x="1222" y="220" width="106" height="42" rx="21" fill="#101317" stroke="#242A34"/>
-    <text x="1250" y="247" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Builder</text>
+    <rect x="1222" y="252" width="106" height="42" rx="21" fill="#101317" stroke="#242A34"/>
+    <text x="1250" y="279" fill="#D7DDE8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Builder</text>
   </g>
 </svg>
