@@ -1,49 +1,53 @@
-# ORION Console
+<p align="center">
+  <img src="frontend/src/assets/app-logo-official.png" alt="Hotloop logo" width="112" />
+</p>
 
-ORION Console é o desktop operacional do robô, empacotado com Electron.
+<p align="center">
+  <img src="docs/hotloop-banner.svg" alt="Hotloop - Coffee Runtime" width="860" />
+</p>
 
-Hoje, o fluxo principal do projeto é:
-- aplicativo desktop em Electron para a interface
-- frontend em React/Vite para a camada visual
-- bridge Python/NetworkTables empacotado como binário standalone dentro do desktop
+<p align="center">
+  <a href="https://github.com/ORC-Robotics/Orion-Console/actions/workflows/release-desktop.yml">
+    <img src="https://github.com/ORC-Robotics/Orion-Console/actions/workflows/release-desktop.yml/badge.svg" alt="Release Desktop workflow" />
+  </a>
+  <img src="https://img.shields.io/badge/version-v0.2.0-8b5a3c?style=for-the-badge" alt="Version 0.2.0" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3d8bff?style=for-the-badge&labelColor=050608" alt="Windows and Linux" />
+  <img src="https://img.shields.io/badge/Electron-37-101317?style=for-the-badge&logo=electron&logoColor=9FEAF9" alt="Electron 37" />
+  <img src="https://img.shields.io/badge/React-19-101317?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
+  <img src="https://img.shields.io/badge/Simulation-Offline%20Ready-7ccb52?style=for-the-badge&labelColor=050608" alt="Offline simulation ready" />
+</p>
 
-## Estrutura
+<p align="center">
+  Hotloop is the Coffee Runtime operator console for live telemetry, configurable workspaces, remote control tooling, and safe offline UI simulation.
+</p>
 
-```text
-Orion-Console/
-|- frontend/                # React, Vite, Electron e build desktop
-|- telemetry_bridge.py      # Fonte do bridge NetworkTables -> HTTP
-|- nt_client.py             # Cliente compartilhado de NetworkTables
-|- requirements.txt         # Dependências Python do bridge
-|- run_desktop.ps1          # Atalho para rodar e empacotar o desktop no Windows
-`- run_desktop.sh           # Atalho para rodar e empacotar o desktop no Linux/macOS
-```
+## Highlights
 
-## Pré-requisitos
+- Operator-first Electron desktop for Windows and Linux.
+- React and Vite frontend with a compact telemetry console layout.
+- Customizable home workspace with saved pages, draggable widgets, resize support, and local persistence.
+- Real and simulated telemetry modes behind the same hook contracts.
+- Python NetworkTables bridge packaged alongside the desktop build.
 
-Para desenvolvimento local e builds do desktop:
+## Stack
 
-- Node.js LTS 24.x
-- npm 11.x
-- Python 3.12, 3.13 ou 3.14 com `pip`
+- `frontend/`: React, Vite, Tailwind CSS, Electron, desktop packaging.
+- `telemetry_bridge.py`: NetworkTables to HTTP bridge used by the desktop app.
+- `nt_client.py`: shared NetworkTables access helpers.
+- `requirements.txt`: Python bridge dependencies.
+- `run_desktop.ps1` and `run_desktop.sh`: local bootstrap helpers for Windows and Linux.
 
-Instalação sugerida do Node.js no Windows via `winget`:
-
-```powershell
-winget install OpenJS.NodeJS.LTS
-```
-
-## Uso Rápido
+## Quick Start
 
 ### Windows
 
-Para abrir o desktop em modo de desenvolvimento:
+Start the desktop in development mode:
 
 ```powershell
 .\run_desktop.ps1 -Install
 ```
 
-Para gerar o executável portable do Windows:
+Build the portable Windows package:
 
 ```powershell
 .\run_desktop.ps1 -Build
@@ -51,60 +55,31 @@ Para gerar o executável portable do Windows:
 
 ### Linux
 
-Para abrir o desktop em modo de desenvolvimento:
+Start the desktop in development mode:
 
 ```bash
 ./run_desktop.sh --install
 ```
 
-Para gerar os pacotes Linux:
+Build the Linux packages:
 
 ```bash
 ./run_desktop.sh --build
 ```
 
-Os artefatos finais ficam em `frontend/release/`.
+Release artifacts are written to `frontend/release/`.
 
-## Releases no GitHub
+## Local Development
 
-O repositório inclui o workflow `.github/workflows/release-desktop.yml` para gerar artefatos de release automaticamente no GitHub Actions.
-
-Hoje o workflow gera:
-- Windows: `.exe` portable
-- Linux: `.AppImage` e `.deb`
-
-O build Linux é feito em uma base Ubuntu mais conservadora para reduzir problemas de compatibilidade com `glibc` em máquinas Linux de usuários finais.
-
-Fluxo recomendado para novas versões:
-
-1. Atualize a versão em `frontend/package.json`.
-2. Faça commit e push na branch normal.
-3. Crie uma tag no formato `vX.Y.Z`.
-4. Faça push da tag.
-5. O GitHub Actions vai gerar os artefatos e anexá-los na GitHub Release automaticamente.
-
-Exemplo:
-
-```powershell
-git add .
-git commit -m "release: prepare v0.1.2"
-git push
-git tag v0.1.2
-git push origin v0.1.2
-```
-
-Depois disso, em um PC novo, basta baixar o artefato pronto na página de Releases.
-
-## Desenvolvimento Manual
-
-Dentro de `frontend/`:
+Install dependencies and run the desktop locally:
 
 ```bash
+cd frontend
 npm install
 npm run desktop:dev
 ```
 
-Builds disponíveis:
+Useful build commands:
 
 ```bash
 npm run build:bridge
@@ -112,7 +87,27 @@ npm run build:web
 npm run build:desktop
 ```
 
-## Fluxo Técnico
+## Release Flow
+
+Hotloop releases are driven by `.github/workflows/release-desktop.yml`.
+
+1. Update `frontend/package.json`.
+2. Commit the release changes.
+3. Create a tag using `vX.Y.Z`.
+4. Push the branch and tag.
+5. GitHub Actions publishes the desktop artifacts to the GitHub Release.
+
+Example:
+
+```powershell
+git add .
+git commit -m "release: prepare Hotloop v0.2.0"
+git push
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+## Runtime Flow
 
 ```text
 Robot / SmartDashboard / NetworkTables
@@ -128,62 +123,45 @@ Robot / SmartDashboard / NetworkTables
      +----------+----------+
                 |
                 v
-       Electron + React dashboard
+         Hotloop desktop app
 ```
 
-## Telemetria e Comandos
+## Telemetry Contracts
 
-O frontend espera estes endpoints do bridge:
+The frontend expects the bridge to expose:
+
 - `GET /health`
 - `GET /api/telemetry`
 - `GET /api/control-mode`
 - `POST /api/control-mode`
 
-Os pontos principais do frontend para isso são:
+Main integration points:
+
 - `frontend/src/data/robotBridge.ts`
 - `frontend/src/hooks/useTelemetry.ts`
 - `frontend/src/hooks/useControlMode.ts`
 
-## Solução de Problemas
+## Troubleshooting
 
-Se o bootstrap falhar logo no começo:
+If bootstrap fails early:
 
-- confirme se `node --version` retorna `24.x`
-- confirme se `npm --version` funciona no terminal
-- confirme se `python --version` funciona no terminal
+- confirm `node --version` returns a supported Node 24 release
+- confirm `npm --version` works in the terminal
+- confirm `python --version` works in the terminal
 
-Se o build do bridge falhar:
+If the bridge build fails:
 
-- confirme se `python -m pip --version` funciona
-- evite Python sem `pip` ou instalações incompletas
-- o script `frontend/scripts/build-bridge.mjs` tenta usar uma virtualenv, mas faz fallback para o Python do sistema quando a `venv` falha
+- confirm `python -m pip --version` works
+- avoid incomplete Python installs without `pip`
+- the bridge builder in `frontend/scripts/build-bridge.mjs` prefers a virtualenv and falls back to the system Python only when needed
 
-Se a janela do Electron não abrir no modo de desenvolvimento:
+If Electron does not open in development mode:
 
-- rode `npm run desktop:dev` dentro de `frontend/`
-- se houver uma instância presa em segundo plano, finalize o processo do Electron e tente novamente
-- o launcher de desenvolvimento em `frontend/scripts/start-electron.mjs` foi ajustado para iniciar corretamente no Windows
+- run `npm run desktop:dev` inside `frontend/`
+- close any stale Electron instance and try again
+- check `frontend/scripts/start-electron.mjs` if you need to troubleshoot the launcher directly
 
-## Compatibilidade com Linux
+## Branding Note
 
-O projeto agora foi preparado para o caminho principal de compatibilidade com Linux:
-
-- o Electron resolve o bridge empacotado por plataforma
-- o build do bridge gera o binário com nome adequado para Windows ou Linux
-- o `electron-builder` está configurado para gerar `AppImage` e `deb`
-- o GitHub Actions gera artefatos Linux junto com os de Windows
-- existe um `run_desktop.sh` para bootstrap local em ambientes Unix
-
-Ainda assim, antes de considerar Linux como totalmente homologado, o ideal é validar em uma máquina Linux real:
-
-1. subida do bridge local
-2. leitura dos endpoints `/health`, `/api/telemetry` e `/api/control-mode`
-3. abertura da janela do Electron
-4. execução do `AppImage`
-5. instalação do `.deb`
-
-## Observações
-
-- O desktop empacotado não depende de Python instalado na máquina do operador, desde que o build tenha sido gerado com sucesso.
-- A fonte de verdade da integração com o robô continua sendo `telemetry_bridge.py`.
-- O próximo passo ideal de distribuição é manter os artefatos prontos em Releases, sem versionar binários dentro do Git.
+The application branding, executable name, and release artifacts now use `Hotloop`.
+The bridge binary intentionally keeps the `orion-telemetry-bridge` name so the desktop integration path stays stable.

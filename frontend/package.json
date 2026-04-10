@@ -1,8 +1,8 @@
 {
-  "name": "amr-reactive-telemetry-dashboard",
+  "name": "hotloop",
   "private": true,
-  "version": "0.1.4",
-  "description": "Desktop telemetry console for ORION robotics operations.",
+  "version": "0.2.0",
+  "description": "Hotloop desktop operator console for Coffee Runtime robotics operations.",
   "author": {
     "name": "ORC-Robotics",
     "email": "orcrobotics@users.noreply.github.com",
@@ -29,7 +29,9 @@
   },
   "build": {
     "appId": "com.orcrobotics.orionconsole",
-    "productName": "ORION Console",
+    "productName": "Hotloop",
+    "executableName": "Hotloop",
+    "artifactName": "${productName}-${version}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -46,6 +48,14 @@
         "filter": [
           "orion-telemetry-bridge*"
         ]
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {

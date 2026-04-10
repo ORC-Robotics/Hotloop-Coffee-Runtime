@@ -2,6 +2,23 @@
 
 Todas as mudancas relevantes deste projeto sao registradas aqui.
 
+## [0.2.0] - 2026-04-10
+
+### Added
+- offline simulation mode behind the same telemetry hook contracts used by the live robot flow
+- customizable home workspace with saved pages, persistent widgets, drag and resize support
+- official Hotloop desktop icon, runtime branding, and packaged executable naming
+
+### Changed
+- rebranded the operator console from ORION Console to Hotloop with Coffee Runtime branding in the UI
+- rebuilt the default dark theme around semantic color tokens with clearer surface, accent, and status roles
+- reshaped the home screen into a denser operator console with a dominant configurable workspace surface
+- refreshed the release README, badges, and visual branding for the new product identity
+
+### Fixed
+- corrected GitHub Actions release artifact naming so desktop release uploads match the new Hotloop package outputs
+- fixed workspace widget add, move, resize, and page actions so local persistence no longer snaps back after interaction
+
 ## [0.1.0] - 2026-04-08
 
 ### Adicionado
