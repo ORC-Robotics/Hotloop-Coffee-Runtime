@@ -1,9 +1,5 @@
 <p align="center">
-  <img src="frontend/src/assets/app-logo-official.png" alt="Hotloop logo" width="112" />
-</p>
-
-<p align="center">
-  <img src="docs/hotloop-banner.svg" alt="Hotloop - Coffee Runtime" width="860" />
+  <img src="docs/hotloop-banner.svg" alt="Hotloop - Coffee Runtime" width="980" />
 </p>
 
 <p align="center">
