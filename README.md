@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ORC-Robotics/Orion-Console/actions/workflows/release-desktop.yml">
-    <img src="https://github.com/ORC-Robotics/Orion-Console/actions/workflows/release-desktop.yml/badge.svg" alt="Release Desktop workflow" />
+  <a href="https://github.com/ORC-Robotics/Hotloop-Coffee-Runtime/actions/workflows/release-desktop.yml">
+    <img src="https://github.com/ORC-Robotics/Hotloop-Coffee-Runtime/actions/workflows/release-desktop.yml/badge.svg" alt="Release Desktop workflow" />
   </a>
   <img src="https://img.shields.io/badge/version-v0.2.0-8b5a3c?style=for-the-badge" alt="Version 0.2.0" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3d8bff?style=for-the-badge&labelColor=050608" alt="Windows and Linux" />

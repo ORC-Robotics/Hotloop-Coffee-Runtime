@@ -8,7 +8,7 @@
     "email": "orcrobotics@users.noreply.github.com",
     "url": "https://github.com/ORC-Robotics"
   },
-  "homepage": "https://github.com/ORC-Robotics/Orion-Console",
+  "homepage": "https://github.com/ORC-Robotics/Hotloop-Coffee-Runtime",
   "type": "module",
   "engines": {
     "node": ">=24"
