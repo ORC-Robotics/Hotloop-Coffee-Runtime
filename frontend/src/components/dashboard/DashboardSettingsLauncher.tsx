@@ -76,8 +76,8 @@ function ThemeSwatch({
       )}
     >
       <div className="flex gap-2">
-        {[theme.tokens.background, theme.tokens.surface, theme.tokens.primary, theme.tokens.accent].map((color) => (
-          <span key={color} className="h-7 flex-1 rounded-full border border-black/10" style={{ backgroundColor: color }} />
+        {[theme.tokens.bgPrimary, theme.tokens.bgSurface, theme.tokens.accentPrimary, theme.tokens.accentSecondary].map((color) => (
+          <span key={color} className="h-7 flex-1 rounded-full border border-[var(--border)]/60" style={{ backgroundColor: color }} />
         ))}
       </div>
       <div className="text-[0.8rem] font-semibold text-[var(--text)]">{theme.label}</div>
@@ -238,7 +238,7 @@ export function DashboardSettingsLauncher() {
               aria-label="Close settings overlay"
             />
 
-            <aside className="absolute inset-y-0 right-0 z-[121] flex w-full max-w-[560px] flex-col border-l border-[var(--border)] bg-[var(--surface)]/96 p-4 shadow-[0_28px_80px_rgba(0,0,0,0.28)] backdrop-blur-md">
+            <aside className="absolute inset-y-0 right-0 z-[121] flex w-full max-w-[560px] flex-col border-l border-[var(--border)] bg-[var(--surface)]/96 p-4 backdrop-blur-md" style={{ boxShadow: 'var(--card-shadow-strong)' }}>
               <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
                 <div>
                   <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
@@ -413,7 +413,7 @@ export function DashboardSettingsLauncher() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/82 text-[var(--text)] transition-colors hover:bg-[var(--surface)]"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-[var(--border)] bg-[var(--surface-alt)]/80 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
         aria-label="Open dashboard settings"
       >
         <GearIcon />

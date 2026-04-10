@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getControlModes, requestControlModeChange } from '../data/robotBridge'
+import { getControlModes, requestControlModeChange } from '../data/telemetryGateway'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type { BridgeStatus, ControlModeState } from '../types/telemetry'
 
 const POLL_MS = 700
@@ -26,11 +27,16 @@ function createFallbackBridgeStatus(): BridgeStatus {
 }
 
 export function useControlMode() {
+  const { mode } = useTelemetryMode()
   const [controlMode, setControlMode] = useState<ControlModeState>(createFallbackControlMode())
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(createFallbackBridgeStatus())
   const [selectedModeId, setSelectedModeId] = useState<string | null>(null)
 
   useEffect(() => {
+    setControlMode(createFallbackControlMode())
+    setBridgeStatus(createFallbackBridgeStatus())
+    setSelectedModeId(null)
+
     let cancelled = false
 
     const sync = async () => {
@@ -76,7 +82,7 @@ export function useControlMode() {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [])
+  }, [mode])
 
   const applyRequestedMode = async () => {
     if (!selectedModeId) {

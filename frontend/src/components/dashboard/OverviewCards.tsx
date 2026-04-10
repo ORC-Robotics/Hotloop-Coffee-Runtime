@@ -1,8 +1,7 @@
-import { formatMillimeters, formatVoltage } from '../../lib/format'
+import { cn } from '../../lib/cn'
+import { formatVoltage } from '../../lib/format'
 import type { TelemetryDerivedState, TelemetrySnapshot, UiTone } from '../../types/telemetry'
 import type { OverviewLayoutId } from '../../preferences/dashboardPreferencesStore'
-import { DashboardCard } from './DashboardCard'
-import { StatusBadge } from './StatusBadge'
 
 interface OverviewCardsProps {
   snapshot: TelemetrySnapshot
@@ -10,95 +9,108 @@ interface OverviewCardsProps {
   layoutMode?: OverviewLayoutId
 }
 
-interface OverviewCardItem {
-  title: string
+interface OverviewStatusItem {
+  label: string
   value: string
-  detail: string
   tone: UiTone
-  accent: 'info' | 'primary' | 'warning' | 'accent'
 }
 
-function toneLabel(tone: UiTone) {
-  if (tone === 'critical') return 'critical'
-  if (tone === 'warning') return 'warning'
-  if (tone === 'good') return 'nominal'
-  if (tone === 'info') return 'info'
-  return 'neutral'
+function pillToneClass(tone: UiTone) {
+  if (tone === 'good') {
+    return 'border-[var(--success)]/32 bg-[color-mix(in_srgb,var(--success)_14%,var(--surface)_86%)] text-[var(--text)]'
+  }
+
+  if (tone === 'warning') {
+    return 'border-[var(--warning)]/32 bg-[color-mix(in_srgb,var(--warning)_16%,var(--surface)_84%)] text-[var(--text)]'
+  }
+
+  if (tone === 'critical') {
+    return 'border-[var(--danger)]/36 bg-[color-mix(in_srgb,var(--danger)_18%,var(--surface)_82%)] text-[var(--text)]'
+  }
+
+  if (tone === 'info') {
+    return 'border-[var(--primary)]/32 bg-[color-mix(in_srgb,var(--primary)_16%,var(--surface)_84%)] text-[var(--text)]'
+  }
+
+  return 'border-[var(--border)] bg-[var(--surface-alt)]/78 text-[var(--text-muted)]'
 }
 
 export function OverviewCards({ snapshot, derived, layoutMode = 'balanced' }: OverviewCardsProps) {
-  const cards: OverviewCardItem[] = [
+  const batteryTone: UiTone =
+    snapshot.battery.voltageV <= 0
+      ? 'neutral'
+      : snapshot.battery.voltageV < 11
+        ? 'critical'
+        : snapshot.battery.voltageV < 11.8
+          ? 'warning'
+          : 'good'
+  const sensorTone: UiTone =
+    snapshot.systems.lidarHealthy && snapshot.systems.validScan && snapshot.systems.navxConnected
+      ? 'good'
+      : snapshot.systems.lidarHealthy || snapshot.systems.validScan || snapshot.systems.navxConnected
+        ? 'warning'
+        : 'critical'
+
+  const items: OverviewStatusItem[] = [
     {
-      title: 'Link',
-      value: snapshot.connection.online ? 'ONLINE' : 'OFFLINE',
-      detail: `${snapshot.connection.mode} via ${snapshot.connection.target}`,
+      label: 'Link',
+      value: snapshot.connection.online ? 'online' : 'offline',
       tone: derived.connectionTone,
-      accent: 'info',
     },
     {
-      title: 'Robot / Target',
-      value: snapshot.connection.target,
-      detail: snapshot.connection.online ? 'tracking host route' : 'standby until bridge sync',
-      tone: derived.robotHealthTone,
-      accent: 'primary',
-    },
-    {
-      title: 'Front Median',
-      value: formatMillimeters(snapshot.perception.frontMedianMm),
-      detail: derived.frontClearanceTone === 'critical' ? 'frontal restriction active' : 'forward clearance estimate',
-      tone: derived.frontClearanceTone,
-      accent: 'warning',
-    },
-    {
-      title: 'Reactive State',
-      value: snapshot.reactive.state,
-      detail: snapshot.reactive.lastTurn === 'none' ? 'steady planner flow' : `last turn ${snapshot.reactive.lastTurn}`,
-      tone: derived.robotHealthTone === 'critical' ? 'warning' : 'info',
-      accent: 'accent',
-    },
-    {
-      title: 'Battery',
+      label: 'Battery',
       value: snapshot.battery.voltageV > 0 ? formatVoltage(snapshot.battery.voltageV, 2) : '--',
-      detail:
-        snapshot.battery.voltageV > 0
-          ? snapshot.battery.currentA > 0
-            ? `${snapshot.battery.currentA.toFixed(1)} A live draw`
-            : 'pack detected'
-          : 'waiting for battery telemetry',
-      tone:
-        snapshot.battery.voltageV <= 0
-          ? 'neutral'
-          : snapshot.battery.voltageV < 11
-            ? 'critical'
-            : snapshot.battery.voltageV < 11.8
-              ? 'warning'
-              : 'good',
-      accent: 'warning',
+      tone: batteryTone,
+    },
+    {
+      label: 'Sensors',
+      value: snapshot.perception.frontBlocked ? 'blocked' : snapshot.perception.frontSlow ? 'caution' : 'clear',
+      tone: sensorTone,
+    },
+    {
+      label: 'Control',
+      value: snapshot.connection.online ? 'ready' : 'standby',
+      tone: snapshot.connection.online ? 'good' : 'neutral',
+    },
+    {
+      label: 'Reactive',
+      value: snapshot.reactive.state.toLowerCase().replace(/_/g, ' '),
+      tone: derived.robotHealthTone === 'critical' ? 'warning' : 'info',
     },
   ]
 
   return (
     <div
-      className={layoutMode === 'dataWall' ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5' : 'grid gap-3 md:grid-cols-2 2xl:grid-cols-5'}
+      className={cn(
+        'flex flex-wrap items-center gap-1.5 rounded-[18px] border border-[var(--border)]/68 bg-[color-mix(in_srgb,var(--surface)_56%,transparent)] px-2 py-1.5',
+        layoutMode === 'dataWall' ? 'justify-between' : '',
+      )}
     >
-      {cards.map((card) => (
-        <DashboardCard
-          key={card.title}
-          title={card.title}
-          subtitle="summary"
-          accent={card.accent}
-          className="min-h-[98px]"
-          headerSlot={<StatusBadge tone={card.tone} label={toneLabel(card.tone)} />}
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className={cn(
+            'inline-flex min-w-[118px] items-center gap-2 rounded-full border px-2.5 py-1.5',
+            pillToneClass(item.tone),
+          )}
         >
-          <div className="flex h-full items-end justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate text-[clamp(0.96rem,0.9rem+0.38vw,1.24rem)] font-semibold tracking-[-0.04em] text-[var(--text)]">
-                {card.value}
-              </div>
-              <p className="mt-1 text-[0.75rem] leading-4 text-[var(--text-muted)]">{card.detail}</p>
-            </div>
-          </div>
-        </DashboardCard>
+          <span
+            className={cn(
+              'h-2.5 w-2.5 shrink-0 rounded-full',
+              item.tone === 'good'
+                ? 'bg-[var(--success)]'
+                : item.tone === 'warning'
+                  ? 'bg-[var(--warning)]'
+                  : item.tone === 'critical'
+                    ? 'bg-[var(--danger)]'
+                    : item.tone === 'info'
+                      ? 'bg-[var(--primary)]'
+                      : 'bg-[var(--border-strong)]',
+            )}
+          />
+          <div className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] opacity-80">{item.label}</div>
+          <div className="truncate text-[0.76rem] font-semibold tracking-[-0.02em]">{item.value}</div>
+        </div>
       ))}
     </div>
   )

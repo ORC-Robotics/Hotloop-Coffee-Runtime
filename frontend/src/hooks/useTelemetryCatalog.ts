@@ -1,14 +1,9 @@
 import { startTransition, useEffect, useEffectEvent, useState } from 'react'
-import { subscribeTelemetryCatalog } from '../data/robotBridge'
+import { subscribeTelemetryCatalog } from '../data/telemetryGateway'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type { BridgeStatus, TelemetryCatalogFeed, TelemetryCatalogStats, TelemetryTopicScope } from '../types/telemetry'
 
 const POLL_MS = 900
-const TELEMETRY_MODE =
-  import.meta.env.VITE_TELEMETRY_MODE === 'mock'
-    ? 'mock'
-    : import.meta.env.VITE_TELEMETRY_MODE === 'offline'
-      ? 'offline-standby'
-      : 'bridge'
 
 function createFallbackScopeCounts(): Record<TelemetryTopicScope, number> {
   return {
@@ -53,15 +48,14 @@ function createFallbackCatalog(): TelemetryCatalogFeed {
 }
 
 export function useTelemetryCatalog(onCatalog?: (catalog: TelemetryCatalogFeed) => void) {
+  const { mode } = useTelemetryMode()
   const [catalog, setCatalog] = useState<TelemetryCatalogFeed>(createFallbackCatalog())
   const handleCatalog = useEffectEvent((incoming: TelemetryCatalogFeed) => {
     onCatalog?.(incoming)
   })
 
   useEffect(() => {
-    if (TELEMETRY_MODE !== 'bridge') {
-      return
-    }
+    setCatalog(createFallbackCatalog())
 
     return subscribeTelemetryCatalog(
       (incoming) => {
@@ -88,7 +82,7 @@ export function useTelemetryCatalog(onCatalog?: (catalog: TelemetryCatalogFeed) 
       },
       POLL_MS,
     )
-  }, [])
+  }, [handleCatalog, mode])
 
   return catalog
 }

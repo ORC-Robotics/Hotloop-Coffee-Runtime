@@ -1,4 +1,22 @@
 export interface ThemeTokens {
+  bgPrimary: string
+  bgSurface: string
+  bgElevated: string
+  accentPrimary: string
+  accentPrimarySoft: string
+  accentSecondary: string
+  accentSecondarySoft: string
+  statusSuccess: string
+  statusSuccessSoft: string
+  statusWarning: string
+  statusWarningSoft: string
+  statusError: string
+  statusErrorSoft: string
+  statusInfo: string
+  statusInfoSoft: string
+  textPrimary: string
+  textSecondary: string
+  textMuted: string
   background: string
   backgroundSubtle: string
   surface: string
@@ -7,7 +25,6 @@ export interface ThemeTokens {
   border: string
   borderStrong: string
   text: string
-  textMuted: string
   primary: string
   primarySoft: string
   success: string

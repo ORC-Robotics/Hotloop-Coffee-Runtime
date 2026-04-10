@@ -1,9 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
     color-scheme: light;
+    --font-display: 'Archivo Black', 'Arial Black', sans-serif;
+    --font-body: 'Manrope', 'Segoe UI', sans-serif;
+    --secondary: var(--accent-secondary);
     font-family: 'Manrope', 'Segoe UI', sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
@@ -24,11 +27,12 @@
   body {
     margin: 0;
     min-height: 100vh;
+    font-family: var(--font-body);
     background:
-      radial-gradient(circle at top left, color-mix(in srgb, var(--primary-soft) 52%, transparent) 0%, transparent 36%),
-      radial-gradient(circle at top right, color-mix(in srgb, var(--accent-soft) 38%, transparent) 0%, transparent 34%),
-      linear-gradient(180deg, var(--background) 0%, var(--background-subtle) 100%);
-    color: var(--text);
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 28%, transparent) 0%, transparent 34%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--accent-secondary) 20%, transparent) 0%, transparent 30%),
+      linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-surface) 100%);
+    color: var(--text-primary);
     transition:
       background-color 180ms ease,
       color 180ms ease;
@@ -41,8 +45,15 @@
     font: inherit;
   }
 
+  h1,
+  h2,
+  [data-display-font='true'] {
+    font-family: var(--font-display);
+    letter-spacing: -0.03em;
+  }
+
   ::selection {
-    background: color-mix(in srgb, var(--primary) 22%, transparent);
+    background: color-mix(in srgb, var(--accent-primary) 26%, transparent);
   }
 
   ::-webkit-scrollbar {
@@ -51,7 +62,7 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: var(--surface-alt);
+    background: var(--bg-surface);
   }
 
   ::-webkit-scrollbar-thumb {

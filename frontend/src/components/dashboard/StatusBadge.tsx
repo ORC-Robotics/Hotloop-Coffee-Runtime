@@ -8,27 +8,27 @@ interface StatusBadgeProps {
 
 const toneStyles: Record<UiTone, CSSProperties> = {
   good: {
-    background: 'var(--successSoft)',
-    color: 'var(--success)',
-    borderColor: 'color-mix(in srgb, var(--success) 26%, var(--border))',
+    background: 'var(--status-success-soft)',
+    color: 'var(--status-success)',
+    borderColor: 'color-mix(in srgb, var(--status-success) 26%, var(--border))',
   },
   warning: {
-    background: 'var(--warningSoft)',
-    color: 'var(--warning)',
-    borderColor: 'color-mix(in srgb, var(--warning) 28%, var(--border))',
+    background: 'var(--status-warning-soft)',
+    color: 'var(--status-warning)',
+    borderColor: 'color-mix(in srgb, var(--status-warning) 28%, var(--border))',
   },
   critical: {
-    background: 'var(--dangerSoft)',
-    color: 'var(--danger)',
-    borderColor: 'color-mix(in srgb, var(--danger) 30%, var(--border))',
+    background: 'var(--status-error-soft)',
+    color: 'var(--status-error)',
+    borderColor: 'color-mix(in srgb, var(--status-error) 30%, var(--border))',
   },
   info: {
-    background: 'var(--infoSoft)',
-    color: 'var(--info)',
-    borderColor: 'color-mix(in srgb, var(--info) 28%, var(--border))',
+    background: 'var(--status-info-soft)',
+    color: 'var(--status-info)',
+    borderColor: 'color-mix(in srgb, var(--status-info) 28%, var(--border))',
   },
   neutral: {
-    background: 'var(--surface-alt)',
+    background: 'var(--bg-elevated)',
     color: 'var(--text-muted)',
     borderColor: 'var(--border)',
   },

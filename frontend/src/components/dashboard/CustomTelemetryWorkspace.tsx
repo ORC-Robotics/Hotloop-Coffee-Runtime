@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { writeTelemetryTopicValue } from '../../data/robotBridge'
+import { writeTelemetryTopicValue } from '../../data/telemetryGateway'
 import { useTelemetryCatalog } from '../../hooks/useTelemetryCatalog'
 import { cn } from '../../lib/cn'
 import { clamp, formatClock } from '../../lib/format'
@@ -440,7 +440,7 @@ function widgetToneAccent(tone: WidgetStatusTone) {
     return {
       color: 'var(--danger)',
       soft: 'var(--danger-soft)',
-      border: 'rgba(191, 110, 114, 0.28)',
+      border: 'color-mix(in srgb, var(--danger) 28%, transparent)',
     }
   }
 
@@ -448,7 +448,7 @@ function widgetToneAccent(tone: WidgetStatusTone) {
     return {
       color: 'var(--warning)',
       soft: 'var(--warning-soft)',
-      border: 'rgba(194, 138, 71, 0.28)',
+      border: 'color-mix(in srgb, var(--warning) 28%, transparent)',
     }
   }
 
@@ -456,14 +456,14 @@ function widgetToneAccent(tone: WidgetStatusTone) {
     return {
       color: 'var(--success)',
       soft: 'var(--success-soft)',
-      border: 'rgba(90, 143, 121, 0.28)',
+      border: 'color-mix(in srgb, var(--success) 28%, transparent)',
     }
   }
 
   return {
     color: 'var(--primary)',
     soft: 'var(--primary-soft)',
-    border: 'rgba(109, 146, 207, 0.28)',
+    border: 'color-mix(in srgb, var(--primary) 28%, transparent)',
   }
 }
 

@@ -38,6 +38,9 @@ if (
 
 const { app, BrowserWindow, dialog, shell } = electronModule
 
+const APP_NAME = 'Hotloop'
+const APP_USER_MODEL_ID = 'com.orcrobotics.orionconsole'
+
 const BRIDGE_HOST = process.env.ORION_BRIDGE_HOST ?? '127.0.0.1'
 const BRIDGE_PORT = Number.parseInt(process.env.ORION_BRIDGE_PORT ?? '8765', 10)
 const BRIDGE_BASE_URL = `http://${BRIDGE_HOST}:${BRIDGE_PORT}`
@@ -85,7 +88,10 @@ function logRuntime(message) {
   }
 }
 
-app.setName('ORION Console')
+app.setName(APP_NAME)
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID)
+}
 app.on('second-instance', () => {
   logRuntime('second-instance received')
 
@@ -107,6 +113,16 @@ function resolveBridgeScriptPath() {
 
 function resolveRendererEntry() {
   return path.join(app.getAppPath(), 'dist', 'index.html')
+}
+
+function resolveWindowIconPath() {
+  const iconFileName = process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, iconFileName)
+  }
+
+  return path.resolve(__dirname, '..', 'build', iconFileName)
 }
 
 function getBridgeBinaryName() {
@@ -221,7 +237,7 @@ async function startBridgeIfNeeded() {
     if (!pythonCommand) {
       const message = app.isPackaged
         ? 'O binario do telemetry bridge nao foi encontrado dentro do pacote desktop.'
-        : 'ORION Console precisa de Python 3 instalado ou de um bridge standalone compilado para iniciar o telemetry bridge local.'
+        : 'Hotloop precisa de Python 3 instalado ou de um bridge standalone compilado para iniciar o telemetry bridge local.'
 
       dialog.showErrorBox('Bridge indisponivel', message)
       return false
@@ -275,7 +291,7 @@ async function startBridgeIfNeeded() {
     logRuntime(`bridge process error: ${error.message}`)
     dialog.showErrorBox(
       'Falha ao iniciar o telemetry bridge',
-      `ORION Console nao conseguiu iniciar o processo do bridge.\n\n${error.message}`,
+      `Hotloop nao conseguiu iniciar o processo do bridge.\n\n${error.message}`,
     )
   })
 
@@ -304,7 +320,7 @@ async function startBridgeIfNeeded() {
     dialog.showErrorBox(
       'Bridge indisponivel',
       stderrBuffer.trim() ||
-        'ORION Console abriu a interface, mas o telemetry bridge nao respondeu em tempo util.',
+        'Hotloop abriu a interface, mas o telemetry bridge nao respondeu em tempo util.',
     )
   }
 
@@ -329,6 +345,7 @@ function stopOwnedBridge() {
 function createMainWindow() {
   logRuntime('creating main window')
   const window = new BrowserWindow({
+    title: APP_NAME,
     width: 1600,
     height: 980,
     minWidth: 1200,
@@ -337,6 +354,7 @@ function createMainWindow() {
     show: false,
     paintWhenInitiallyHidden: true,
     backgroundColor: '#0f1418',
+    icon: resolveWindowIconPath(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -411,7 +429,7 @@ app.whenReady().then(async () => {
   } catch (error) {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)
     logRuntime(`whenReady bootstrap failed: ${message}`)
-    dialog.showErrorBox('Falha ao iniciar ORION Console', message)
+    dialog.showErrorBox('Falha ao iniciar Hotloop', message)
     app.quit()
   }
 })

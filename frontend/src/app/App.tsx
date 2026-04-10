@@ -11,8 +11,10 @@ import { DashboardSettingsLauncher } from '../components/dashboard/DashboardSett
 import { DashboardTabs, type DashboardTabId } from '../components/dashboard/DashboardTabs'
 import { EncodersPanel } from '../components/dashboard/EncodersPanel'
 import { HeadingPanel } from '../components/dashboard/HeadingPanel'
+import { HomeWorkspaceShell } from '../components/dashboard/HomeWorkspaceShell'
 import { NetworkPanel } from '../components/dashboard/NetworkPanel'
 import { OverviewCards } from '../components/dashboard/OverviewCards'
+import { OverviewOperatorRail } from '../components/dashboard/OverviewOperatorRail'
 import { PerceptionPanel } from '../components/dashboard/PerceptionPanel'
 import { ReactiveStatePanel } from '../components/dashboard/ReactiveStatePanel'
 import { RemoteDriverWorkspace } from '../components/dashboard/RemoteDriverWorkspace'
@@ -22,7 +24,9 @@ import {
 } from '../components/dashboard/SecondaryWorkspaceBar'
 import { StatusBadge } from '../components/dashboard/StatusBadge'
 import { SystemsHealthPanel } from '../components/dashboard/SystemsHealthPanel'
+import { TelemetryModeToggle } from '../components/dashboard/TelemetryModeToggle'
 import { useDashboardPreferences } from '../preferences/useDashboardPreferences'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import { TopStatusBar } from '../components/dashboard/TopStatusBar'
 import { useControlMode } from '../hooks/useControlMode'
 import { useTelemetry } from '../hooks/useTelemetry'
@@ -45,71 +49,24 @@ function sensorChainTone(snapshot: ReturnType<typeof useTelemetry>['snapshot']) 
   return 'critical'
 }
 
-const overviewShellLayouts = {
-  balanced: 'xl:grid-cols-[minmax(290px,22fr)_minmax(0,56fr)_minmax(300px,22fr)]',
-  pilot: 'xl:grid-cols-[minmax(270px,18fr)_minmax(0,62fr)_minmax(300px,20fr)]',
-  dataWall: 'xl:grid-cols-[minmax(320px,26fr)_minmax(0,48fr)_minmax(320px,26fr)]',
-} as const
-
-const overviewLeftLayouts = {
-  balanced: 'xl:grid-rows-[minmax(0,1.2fr)_minmax(0,0.8fr)]',
-  pilot: 'xl:grid-rows-[minmax(0,1fr)_minmax(0,0.9fr)]',
-  dataWall: 'xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)]',
-} as const
-
-const overviewCenterLayouts = {
-  balanced: 'xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]',
-  pilot: 'xl:grid-cols-[minmax(0,1.22fr)_minmax(0,0.78fr)]',
-  dataWall: 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
-} as const
-
-const overviewRightLayouts = {
-  balanced: 'xl:grid-rows-[minmax(0,0.82fr)_minmax(0,1.18fr)]',
-  pilot: 'xl:grid-rows-[minmax(0,0.7fr)_minmax(0,1.3fr)]',
-  dataWall: 'xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)]',
-} as const
-
 export default function App() {
   const { snapshot, alerts, derived, batteryHistory } = useTelemetry()
   const { controlMode, bridgeStatus, selectedModeId, setSelectedModeId, applyRequestedMode } =
     useControlMode()
   const { preferences, activeCameraFeeds } = useDashboardPreferences()
+  const { mode } = useTelemetryMode()
   const [activeTab, setActiveTab] = useState<DashboardTabId>('overview')
   const [secondaryBarOpen, setSecondaryBarOpen] = useState(false)
   const [activeWorkspace, setActiveWorkspace] = useState<SecondaryWorkspaceId | null>(null)
   const hasConfiguredCameraFeeds = activeCameraFeeds.length > 0
+  const homeSurfaceActive = activeTab === 'overview' && activeWorkspace === null
 
   const overviewMain = (
-    <div className={`grid gap-3 ${overviewShellLayouts[preferences.layout.overviewLayout]}`}>
-      <div className={`grid min-h-0 gap-3 ${overviewLeftLayouts[preferences.layout.overviewLayout]}`}>
-        <HeadingPanel data={snapshot.heading} tone={derived.alignmentTone} />
-        <CommandsPanel data={snapshot.commands} derived={derived} />
+    <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_336px]">
+      <div className="min-h-0">
+        <HomeWorkspaceShell />
       </div>
-
-      <div className={`grid min-h-0 gap-3 ${overviewCenterLayouts[preferences.layout.overviewLayout]}`}>
-        <PerceptionPanel data={snapshot.perception} />
-        <ReactiveStatePanel
-          online={snapshot.connection.online}
-          heading={snapshot.heading}
-          perception={snapshot.perception}
-          commands={snapshot.commands}
-          systems={snapshot.systems}
-          data={snapshot.reactive}
-          derived={derived}
-        />
-      </div>
-
-      <div className={`grid min-h-0 gap-3 ${overviewRightLayouts[preferences.layout.overviewLayout]}`}>
-        <AlertsPanel alerts={alerts} />
-        <ControlModePanel
-          controlMode={controlMode}
-          selectedModeId={selectedModeId}
-          onSelectMode={setSelectedModeId}
-          onApplyMode={applyRequestedMode}
-          connection={snapshot.connection}
-          bridgeStatus={bridgeStatus}
-        />
-      </div>
+      <OverviewOperatorRail active={homeSurfaceActive} />
     </div>
   )
 
@@ -133,21 +90,76 @@ export default function App() {
 
   const diagnosticsMain =
     preferences.layout.diagnosticsLayout === 'deepDive' ? (
-      <div className="grid gap-3">
-        <EncodersPanel data={snapshot.encoders} />
-        {diagnosticsMetricsCard}
+      <div className="grid gap-3 xl:grid-cols-12">
+        <div className="grid gap-3 xl:col-span-4">
+          <HeadingPanel data={snapshot.heading} tone={derived.alignmentTone} />
+          <CommandsPanel data={snapshot.commands} derived={derived} />
+          {diagnosticsMetricsCard}
+        </div>
+        <div className="xl:col-span-8">
+          <ReactiveStatePanel
+            online={snapshot.connection.online}
+            heading={snapshot.heading}
+            perception={snapshot.perception}
+            commands={snapshot.commands}
+            systems={snapshot.systems}
+            data={snapshot.reactive}
+            derived={derived}
+          />
+        </div>
+        <div className="xl:col-span-7">
+          <PerceptionPanel data={snapshot.perception} />
+        </div>
+        <div className="grid gap-3 xl:col-span-5">
+          <EncodersPanel data={snapshot.encoders} />
+          <ControlModePanel
+            controlMode={controlMode}
+            selectedModeId={selectedModeId}
+            onSelectMode={setSelectedModeId}
+            onApplyMode={applyRequestedMode}
+            connection={snapshot.connection}
+            bridgeStatus={bridgeStatus}
+          />
+        </div>
       </div>
     ) : (
       <div className="grid gap-3 xl:grid-cols-12">
-        <div className="xl:col-span-8">
-          <EncodersPanel data={snapshot.encoders} />
+        <div className="grid gap-3 xl:col-span-4">
+          <HeadingPanel data={snapshot.heading} tone={derived.alignmentTone} />
+          <CommandsPanel data={snapshot.commands} derived={derived} />
         </div>
-        <div className="xl:col-span-4">{diagnosticsMetricsCard}</div>
+        <div className="xl:col-span-8">
+          <ReactiveStatePanel
+            online={snapshot.connection.online}
+            heading={snapshot.heading}
+            perception={snapshot.perception}
+            commands={snapshot.commands}
+            systems={snapshot.systems}
+            data={snapshot.reactive}
+            derived={derived}
+          />
+        </div>
+        <div className="xl:col-span-7">
+          <PerceptionPanel data={snapshot.perception} />
+        </div>
+        <div className="grid gap-3 xl:col-span-5">
+          <EncodersPanel data={snapshot.encoders} />
+          <ControlModePanel
+            controlMode={controlMode}
+            selectedModeId={selectedModeId}
+            onSelectMode={setSelectedModeId}
+            onApplyMode={applyRequestedMode}
+            connection={snapshot.connection}
+            bridgeStatus={bridgeStatus}
+          />
+          {diagnosticsMetricsCard}
+        </div>
       </div>
     )
 
   const systemsPanels = (
     <>
+      <AlertsPanel alerts={alerts} />
       {preferences.layout.showCameraInSystems && hasConfiguredCameraFeeds ? (
         <CameraViewportPanel title="Systems Camera" subtitle="live robot viewport pinned into the systems page" compact />
       ) : null}
@@ -257,9 +269,15 @@ export default function App() {
           lastUpdatedLabel={derived.lastUpdatedLabel}
           scenarioLabel={snapshot.scenarioLabel}
           statusTone={derived.connectionTone}
-          controls={<DashboardSettingsLauncher />}
+          controls={
+            <>
+              <TelemetryModeToggle />
+              <DashboardSettingsLauncher />
+            </>
+          }
           extraBadges={
             <>
+              <StatusBadge tone={mode === 'online' ? 'good' : 'warning'} label={mode === 'online' ? 'online mode' : 'simulation'} />
               <StatusBadge tone={sensorChainTone(snapshot)} label="sensor chain" />
               <StatusBadge tone={controlSyncTone(controlMode.syncStatus)} label={`automode ${controlMode.syncStatus}`} />
             </>
@@ -276,16 +294,28 @@ export default function App() {
               setActiveWorkspace(null)
             }}
           />
-          <SecondaryWorkspaceBar
-            open={secondaryBarOpen}
-            activeWorkspace={activeWorkspace}
-            onToggle={() => setSecondaryBarOpen((current) => !current)}
-            onSelectWorkspace={(workspace) => {
-              setSecondaryBarOpen(true)
-              setActiveWorkspace(workspace)
-            }}
-            onCloseWorkspace={() => setActiveWorkspace(null)}
-          />
+          {secondaryBarOpen || activeWorkspace ? (
+            <SecondaryWorkspaceBar
+              open={secondaryBarOpen}
+              activeWorkspace={activeWorkspace}
+              onToggle={() => setSecondaryBarOpen((current) => !current)}
+              onSelectWorkspace={(workspace) => {
+                setSecondaryBarOpen(true)
+                setActiveWorkspace(workspace)
+              }}
+              onCloseWorkspace={() => setActiveWorkspace(null)}
+            />
+          ) : (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSecondaryBarOpen(true)}
+                className="rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/78 px-4 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+              >
+                Open workspaces
+              </button>
+            </div>
+          )}
         </div>
       }
       main={main}

@@ -3,7 +3,8 @@ import {
   getRemoteDriverStatus,
   sendRemoteDriverAction,
   sendRemoteDriverState,
-} from '../data/robotBridge'
+} from '../data/telemetryGateway'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type {
   BridgeStatus,
   RemoteDriverAction,
@@ -236,6 +237,7 @@ function createZeroPacket(gyroAssist: boolean) {
 }
 
 export function useRemoteDriver(active: boolean) {
+  const { mode } = useTelemetryMode()
   const [remoteDriver, setRemoteDriver] = useState<RemoteDriverStatus>(createFallbackRemoteDriver())
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(createFallbackBridgeStatus())
   const [controlsArmed, setControlsArmed] = useState(false)
@@ -307,7 +309,7 @@ export function useRemoteDriver(active: boolean) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [active])
+  }, [active, mode])
 
   useEffect(() => {
     if (!active) {
@@ -394,7 +396,7 @@ export function useRemoteDriver(active: boolean) {
       window.removeEventListener('gamepaddisconnected', handleGamepadChange)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [active])
+  }, [active, mode])
 
   useEffect(() => {
     if (!active) {
@@ -461,7 +463,7 @@ export function useRemoteDriver(active: boolean) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [active])
+  }, [active, mode])
 
   useEffect(() => {
     if (controlsArmed) {
@@ -497,7 +499,7 @@ export function useRemoteDriver(active: boolean) {
     }
 
     void sendZeroPacket()
-  }, [active, controlsArmed])
+  }, [active, controlsArmed, mode])
 
   const dispatchAction = async (action: RemoteDriverAction) => {
     setCommandState({

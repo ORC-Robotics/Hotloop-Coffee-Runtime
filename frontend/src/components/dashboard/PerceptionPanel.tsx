@@ -30,7 +30,7 @@ export function PerceptionPanel({ data }: PerceptionPanelProps) {
 
   return (
     <DashboardCard
-      title="Reactive Perception"
+      title="Perception"
       subtitle="corridor geometry and openings"
       accent="info"
       className="min-h-[0]"

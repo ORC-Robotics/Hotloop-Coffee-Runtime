@@ -1,18 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getTelemetrySnapshot, subscribeTelemetry } from '../data/robotBridge'
-import { createOfflineSnapshot, generateMockTelemetryFrame } from '../data/mockTelemetry'
+import { getTelemetrySnapshot, subscribeTelemetry } from '../data/telemetryGateway'
+import { createOfflineSnapshot } from '../data/mockTelemetry'
 import { deriveAlerts, deriveTelemetryState } from '../lib/alertRules'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type { BatteryHistoryPoint, TelemetryFeed, TelemetrySnapshot } from '../types/telemetry'
 
 const TICK_MS = 150
 const BATTERY_HISTORY_INTERVAL_MS = 450
 const MAX_BATTERY_POINTS = 48
-const TELEMETRY_MODE =
-  import.meta.env.VITE_TELEMETRY_MODE === 'mock'
-    ? 'mock'
-    : import.meta.env.VITE_TELEMETRY_MODE === 'offline'
-      ? 'offline-standby'
-      : 'bridge'
 
 function mergeIncomingSnapshot(
   previous: TelemetrySnapshot,
@@ -75,33 +70,15 @@ function appendBatteryHistory(
 }
 
 export function useTelemetry(): TelemetryFeed {
-  const [snapshot, setSnapshot] = useState(() =>
-    TELEMETRY_MODE === 'mock' ? generateMockTelemetryFrame(Date.now()) : createOfflineSnapshot(),
-  )
+  const { mode } = useTelemetryMode()
+  const [snapshot, setSnapshot] = useState(() => createOfflineSnapshot())
   const [batteryHistory, setBatteryHistory] = useState<BatteryHistoryPoint[]>([])
 
   useEffect(() => {
-    if (TELEMETRY_MODE !== 'mock') {
-      return
-    }
+    setSnapshot(createOfflineSnapshot())
+    setBatteryHistory([])
 
-    const interval = window.setInterval(() => {
-      const nextSnapshot = generateMockTelemetryFrame(Date.now())
-      setSnapshot(nextSnapshot)
-      setBatteryHistory((previous) => appendBatteryHistory(previous, nextSnapshot))
-    }, TICK_MS)
-
-    return () => {
-      window.clearInterval(interval)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (TELEMETRY_MODE !== 'bridge') {
-      return
-    }
-
-    return subscribeTelemetry(
+    const unsubscribe = subscribeTelemetry(
       (incoming) => {
         setSnapshot((previous) => mergeIncomingSnapshot(previous, incoming))
         setBatteryHistory((previous) => appendBatteryHistory(previous, incoming))
@@ -117,15 +94,11 @@ export function useTelemetry(): TelemetryFeed {
       },
       TICK_MS,
     )
-  }, [])
-
-  useEffect(() => {
-    if (TELEMETRY_MODE !== 'bridge') {
-      return
-    }
 
     void getTelemetrySnapshot()
-  }, [])
+
+    return unsubscribe
+  }, [mode])
 
   const alerts = useMemo(() => deriveAlerts(snapshot), [snapshot])
   const derived = useMemo(() => deriveTelemetryState(snapshot, alerts), [alerts, snapshot])
