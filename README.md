@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hotloop-banner.svg" alt="Hotloop - Coffee Runtime" width="980" />
+  <img src="docs/hotloop-banner.png" alt="Hotloop - Coffee Runtime" width="980" />
 </p>
 
 <p align="center">
