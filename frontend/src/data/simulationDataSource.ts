@@ -7,6 +7,7 @@ import type {
   RemoteDriverAction,
   RemoteDriverFeed,
   RemoteDriverResponse,
+  RemoteDriverSessionMode,
   RemoteDriverStateCommand,
   RemoteDriverStatus,
   TelemetryCatalogFeed,
@@ -571,25 +572,39 @@ class SimulationEngine {
       message:
         this.remoteDriver.mode === 'teleop'
           ? 'Simulation teleop packet applied.'
-          : 'Simulation input received. Enable teleop to drive the robot model.',
+          : 'Simulation input received. Start teleop to drive the robot model.',
     }
   }
 
-  sendRemoteDriverAction(action: RemoteDriverAction, source: string): RemoteDriverResponse {
+  sendRemoteDriverAction(
+    action: RemoteDriverAction,
+    source: string,
+    sessionMode?: RemoteDriverSessionMode,
+  ): RemoteDriverResponse {
     const now = Date.now()
     this.lastActionTimestampMs = now
 
-    if (action === 'enable_teleop') {
+    if (action === 'start' && sessionMode === 'teleop') {
       this.remoteDriver = {
         ...this.remoteDriver,
         active: true,
         mode: 'teleop',
         robotEnabled: true,
         source,
-        lastAction: action,
+        inputSource: 'idle',
+        lastAction: 'start_teleop',
       }
-      this.remoteActionMessage = 'Simulation teleop enabled.'
-    } else if (action === 'enable_auto') {
+      this.driveInput = {
+        ...this.driveInput,
+        x: 0,
+        y: 0,
+        z: 0,
+        inputSource: 'idle',
+        source,
+      }
+      this.lastPacketTimestampMs = now
+      this.remoteActionMessage = 'Simulation teleop started. Waiting for keyboard or joystick input.'
+    } else if (action === 'start' && sessionMode === 'autonomous') {
       this.remoteDriver = {
         ...this.remoteDriver,
         active: true,
@@ -597,9 +612,18 @@ class SimulationEngine {
         robotEnabled: true,
         source,
         inputSource: 'auto',
-        lastAction: action,
+        lastAction: 'start_autonomous',
       }
-      this.remoteActionMessage = `Simulation autonomous enabled on ${currentModeLabel(this.controlMode)}.`
+      this.driveInput = {
+        ...this.driveInput,
+        x: 0,
+        y: 0,
+        z: 0,
+        inputSource: 'idle',
+        source,
+      }
+      this.lastPacketTimestampMs = null
+      this.remoteActionMessage = `Simulation autonomous started on ${currentModeLabel(this.controlMode)}.`
     } else if (action === 'disable') {
       this.remoteDriver = {
         ...this.remoteDriver,
@@ -615,6 +639,7 @@ class SimulationEngine {
         z: 0,
         inputSource: 'idle',
       }
+      this.lastPacketTimestampMs = null
       this.remoteActionMessage = 'Simulation driver disabled.'
     } else if (action === 'reset') {
       this.driveInput = {
@@ -628,10 +653,11 @@ class SimulationEngine {
         ...this.remoteDriver,
         lastAction: action,
       }
+      this.lastPacketTimestampMs = null
       this.tuning.headingBiasDeg = 0
       this.tuning.frontDistanceBiasMm = 0
       this.remoteActionMessage = 'Simulation pose and tunables reset.'
-    } else {
+    } else if (action === 'estop') {
       this.remoteDriver = {
         ...this.remoteDriver,
         active: false,
@@ -646,7 +672,14 @@ class SimulationEngine {
         z: 0,
         inputSource: 'idle',
       }
+      this.lastPacketTimestampMs = null
       this.remoteActionMessage = 'Simulation E-stop asserted.'
+    } else {
+      return {
+        remoteDriver: this.remoteDriver,
+        bridgeStatus: this.bridgeStatus,
+        error: 'Simulation action requires a valid session mode.',
+      }
     }
 
     this.refresh(now)
@@ -708,6 +741,8 @@ export function subscribeTelemetry(
   _onError: () => void,
   _intervalMs: number,
 ) {
+  void _onError
+  void _intervalMs
   return engine.subscribeTelemetry(onSnapshot)
 }
 
@@ -720,6 +755,8 @@ export function subscribeTelemetryCatalog(
   _onError: () => void,
   _intervalMs: number,
 ) {
+  void _onError
+  void _intervalMs
   return engine.subscribeTelemetryCatalog(onCatalog)
 }
 
@@ -744,8 +781,9 @@ export async function sendRemoteDriverState(
 export async function sendRemoteDriverAction(
   action: RemoteDriverAction,
   source: string,
+  sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
-  return engine.sendRemoteDriverAction(action, source)
+  return engine.sendRemoteDriverAction(action, source, sessionMode)
 }
 
 export async function writeTelemetryTopicValue(

@@ -4,7 +4,6 @@ import { BatteryPanel } from '../components/dashboard/BatteryPanel'
 import { CameraViewportPanel } from '../components/dashboard/CameraViewportPanel'
 import { CameraWallWorkspace } from '../components/dashboard/CameraWallWorkspace'
 import { CommandsPanel } from '../components/dashboard/CommandsPanel'
-import { ControlModePanel } from '../components/dashboard/ControlModePanel'
 import { CustomTelemetryWorkspace } from '../components/dashboard/CustomTelemetryWorkspace'
 import { DashboardCard } from '../components/dashboard/DashboardCard'
 import { DashboardSettingsLauncher } from '../components/dashboard/DashboardSettingsLauncher'
@@ -15,9 +14,6 @@ import { HomeWorkspaceShell } from '../components/dashboard/HomeWorkspaceShell'
 import { NetworkPanel } from '../components/dashboard/NetworkPanel'
 import { OverviewCards } from '../components/dashboard/OverviewCards'
 import { OverviewOperatorRail } from '../components/dashboard/OverviewOperatorRail'
-import { PerceptionPanel } from '../components/dashboard/PerceptionPanel'
-import { ReactiveStatePanel } from '../components/dashboard/ReactiveStatePanel'
-import { RemoteDriverWorkspace } from '../components/dashboard/RemoteDriverWorkspace'
 import {
   SecondaryWorkspaceBar,
   type SecondaryWorkspaceId,
@@ -25,11 +21,11 @@ import {
 import { StatusBadge } from '../components/dashboard/StatusBadge'
 import { SystemsHealthPanel } from '../components/dashboard/SystemsHealthPanel'
 import { TelemetryModeToggle } from '../components/dashboard/TelemetryModeToggle'
-import { useDashboardPreferences } from '../preferences/useDashboardPreferences'
-import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import { TopStatusBar } from '../components/dashboard/TopStatusBar'
 import { useControlMode } from '../hooks/useControlMode'
 import { useTelemetry } from '../hooks/useTelemetry'
+import { useDashboardPreferences } from '../preferences/useDashboardPreferences'
+import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import { DashboardLayout } from './layout/DashboardLayout'
 
 function controlSyncTone(status: ReturnType<typeof useControlMode>['controlMode']['syncStatus']) {
@@ -49,6 +45,17 @@ function sensorChainTone(snapshot: ReturnType<typeof useTelemetry>['snapshot']) 
   return 'critical'
 }
 
+function resolveControlModeLabel(
+  controlMode: ReturnType<typeof useControlMode>['controlMode'],
+  modeId: string | null,
+) {
+  if (!modeId) {
+    return '--'
+  }
+
+  return controlMode.availableModes.find((mode) => mode.id === modeId)?.label ?? modeId
+}
+
 export default function App() {
   const { snapshot, alerts, derived, batteryHistory } = useTelemetry()
   const { controlMode, bridgeStatus, selectedModeId, setSelectedModeId, applyRequestedMode } =
@@ -60,30 +67,43 @@ export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<SecondaryWorkspaceId | null>(null)
   const hasConfiguredCameraFeeds = activeCameraFeeds.length > 0
   const homeSurfaceActive = activeTab === 'overview' && activeWorkspace === null
+  const activeAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.currentModeId)
+  const requestedAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.requestedModeId)
 
   const overviewMain = (
     <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_336px]">
       <div className="min-h-0">
         <HomeWorkspaceShell />
       </div>
-      <OverviewOperatorRail active={homeSurfaceActive} />
+      <OverviewOperatorRail
+        active={homeSurfaceActive}
+        controlMode={controlMode}
+        selectedModeId={selectedModeId}
+        onSelectMode={setSelectedModeId}
+        onApplyMode={applyRequestedMode}
+      />
     </div>
   )
 
   const diagnosticsMetricsCard = (
-    <DashboardCard title="Secondary Metrics" subtitle="auxiliary counters" accent="info" className="min-h-[0]">
+    <DashboardCard title="Session Summary" subtitle="bridge and chooser state" accent="info" className="min-h-[0]">
       <div className="grid gap-2">
         {[
           ['Angular Error', `${snapshot.heading.angularErrorDeg.toFixed(1)} deg`],
           ['Lateral Error', `${snapshot.heading.lateralErrorM.toFixed(2)} m`],
-          ['Stable Scans', String(snapshot.reactive.stableScans)],
-          ['State Time', `${snapshot.reactive.stateTimeSec.toFixed(1)} s`],
+          ['Auto Mode', activeAutoModeLabel],
+          ['Requested', requestedAutoModeLabel],
         ].map(([label, value]) => (
           <div key={label} className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
-            <div className="text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
+            <div className="text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              {label}
+            </div>
             <div className="mt-1.5 font-mono text-[0.86rem] text-[var(--text)]">{value}</div>
           </div>
         ))}
+        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface)]/82 px-3 py-2.5 text-[0.76rem] leading-6 text-[var(--text-muted)]">
+          {controlMode.message ?? bridgeStatus.message ?? 'Waiting for automode bridge state.'}
+        </div>
       </div>
     </DashboardCard>
   )
@@ -96,30 +116,19 @@ export default function App() {
           <CommandsPanel data={snapshot.commands} derived={derived} />
           {diagnosticsMetricsCard}
         </div>
-        <div className="xl:col-span-8">
-          <ReactiveStatePanel
-            online={snapshot.connection.online}
-            heading={snapshot.heading}
-            perception={snapshot.perception}
-            commands={snapshot.commands}
-            systems={snapshot.systems}
-            data={snapshot.reactive}
-            derived={derived}
-          />
-        </div>
-        <div className="xl:col-span-7">
-          <PerceptionPanel data={snapshot.perception} />
-        </div>
-        <div className="grid gap-3 xl:col-span-5">
+        <div className="grid gap-3 xl:col-span-4">
           <EncodersPanel data={snapshot.encoders} />
-          <ControlModePanel
-            controlMode={controlMode}
-            selectedModeId={selectedModeId}
-            onSelectMode={setSelectedModeId}
-            onApplyMode={applyRequestedMode}
-            connection={snapshot.connection}
+          <NetworkPanel
+            data={snapshot.connection}
+            tone={derived.connectionTone}
             bridgeStatus={bridgeStatus}
+            controlMode={controlMode}
           />
+        </div>
+        <div className="grid gap-3 xl:col-span-4">
+          <SystemsHealthPanel data={snapshot.systems} overallTone={derived.robotHealthTone} />
+          <BatteryPanel battery={snapshot.battery} history={batteryHistory} />
+          <AlertsPanel alerts={alerts} />
         </div>
       </div>
     ) : (
@@ -127,32 +136,21 @@ export default function App() {
         <div className="grid gap-3 xl:col-span-4">
           <HeadingPanel data={snapshot.heading} tone={derived.alignmentTone} />
           <CommandsPanel data={snapshot.commands} derived={derived} />
-        </div>
-        <div className="xl:col-span-8">
-          <ReactiveStatePanel
-            online={snapshot.connection.online}
-            heading={snapshot.heading}
-            perception={snapshot.perception}
-            commands={snapshot.commands}
-            systems={snapshot.systems}
-            data={snapshot.reactive}
-            derived={derived}
-          />
-        </div>
-        <div className="xl:col-span-7">
-          <PerceptionPanel data={snapshot.perception} />
-        </div>
-        <div className="grid gap-3 xl:col-span-5">
-          <EncodersPanel data={snapshot.encoders} />
-          <ControlModePanel
-            controlMode={controlMode}
-            selectedModeId={selectedModeId}
-            onSelectMode={setSelectedModeId}
-            onApplyMode={applyRequestedMode}
-            connection={snapshot.connection}
-            bridgeStatus={bridgeStatus}
-          />
           {diagnosticsMetricsCard}
+        </div>
+        <div className="grid gap-3 xl:col-span-4">
+          <EncodersPanel data={snapshot.encoders} />
+          <NetworkPanel
+            data={snapshot.connection}
+            tone={derived.connectionTone}
+            bridgeStatus={bridgeStatus}
+            controlMode={controlMode}
+          />
+        </div>
+        <div className="grid gap-3 xl:col-span-4">
+          <SystemsHealthPanel data={snapshot.systems} overallTone={derived.robotHealthTone} />
+          <BatteryPanel battery={snapshot.battery} history={batteryHistory} />
+          <AlertsPanel alerts={alerts} />
         </div>
       </div>
     )
@@ -200,7 +198,9 @@ export default function App() {
         <div className="xl:col-span-4">
           <SystemsHealthPanel data={snapshot.systems} overallTone={derived.robotHealthTone} />
         </div>
-        <div className={`grid gap-3 xl:col-span-8 ${preferences.layout.showCameraInSystems && hasConfiguredCameraFeeds ? 'xl:grid-rows-[minmax(0,1.06fr)_minmax(0,1fr)_minmax(0,1fr)]' : 'xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)]'}`}>
+        <div
+          className={`grid gap-3 xl:col-span-8 ${preferences.layout.showCameraInSystems && hasConfiguredCameraFeeds ? 'xl:grid-rows-[minmax(0,1.06fr)_minmax(0,1fr)_minmax(0,1fr)]' : 'xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)]'}`}
+        >
           {systemsPanels}
         </div>
       </div>
@@ -256,8 +256,6 @@ export default function App() {
       ? <CustomTelemetryWorkspace />
       : activeWorkspace === 'camera-wall'
         ? <CameraWallWorkspace />
-      : activeWorkspace === 'remote-driver'
-        ? <RemoteDriverWorkspace active />
         : primaryMain
 
   return (

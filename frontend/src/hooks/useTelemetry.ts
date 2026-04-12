@@ -75,9 +75,6 @@ export function useTelemetry(): TelemetryFeed {
   const [batteryHistory, setBatteryHistory] = useState<BatteryHistoryPoint[]>([])
 
   useEffect(() => {
-    setSnapshot(createOfflineSnapshot())
-    setBatteryHistory([])
-
     const unsubscribe = subscribeTelemetry(
       (incoming) => {
         setSnapshot((previous) => mergeIncomingSnapshot(previous, incoming))

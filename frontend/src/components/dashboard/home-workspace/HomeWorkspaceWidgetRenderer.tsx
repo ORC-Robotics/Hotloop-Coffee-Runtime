@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { cn } from '../../../lib/cn'
 import { clamp } from '../../../lib/format'
 import type { HomeWorkspaceWidget, HomeWorkspaceWidgetRenderer as WidgetRendererId } from '../../../home-workspace/homeWorkspaceStore'

@@ -9,51 +9,18 @@ import {
   type CameraFeedConfig,
   type DashboardLayoutSettings,
   type DashboardPreferencesState,
-  type LayoutPresetDefinition,
-  type LayoutPresetId,
   type UiScaleId,
 } from './dashboardPreferencesStore'
 
 const STORAGE_KEY = 'orion.dashboard-preferences.v1'
 
-const layoutPresets: LayoutPresetDefinition[] = [
-  {
-    id: 'factory',
-    label: 'Factory',
-    description: 'Balanced layout for everyday telemetry monitoring.',
-    layout: {
-      uiScale: 'standard',
-      overviewLayout: 'balanced',
-      diagnosticsLayout: 'split',
-      systemsLayout: 'wide',
-      showCameraInSystems: true,
-    },
-  },
-  {
-    id: 'pit',
-    label: 'Pit Tuning',
-    description: 'Bigger data and tighter focus for adjustments near the robot cart.',
-    layout: {
-      uiScale: 'large',
-      overviewLayout: 'pilot',
-      diagnosticsLayout: 'deepDive',
-      systemsLayout: 'stacked',
-      showCameraInSystems: false,
-    },
-  },
-  {
-    id: 'analyst',
-    label: 'Analyst Wall',
-    description: 'Dense information layout for long sessions and deep inspection.',
-    layout: {
-      uiScale: 'compact',
-      overviewLayout: 'dataWall',
-      diagnosticsLayout: 'split',
-      systemsLayout: 'cameraFocus',
-      showCameraInSystems: true,
-    },
-  },
-]
+const factoryLayout: Omit<DashboardLayoutSettings, 'layoutLocked'> = {
+  uiScale: 'standard',
+  overviewLayout: 'balanced',
+  diagnosticsLayout: 'split',
+  systemsLayout: 'wide',
+  showCameraInSystems: true,
+}
 
 const defaultCameraFeeds: CameraFeedConfig[] = [
   {
@@ -76,11 +43,10 @@ const defaultCameraFeeds: CameraFeedConfig[] = [
 
 const defaultPreferences: DashboardPreferencesState = {
   layout: {
-    ...layoutPresets[0].layout,
+    ...factoryLayout,
     layoutLocked: false,
   },
   cameraFeeds: defaultCameraFeeds,
-  activePresetId: 'factory',
 }
 
 const uiScalePixels: Record<UiScaleId, string> = {
@@ -104,20 +70,6 @@ function sanitizeCameraFeed(feed: Partial<CameraFeedConfig>, fallback: CameraFee
         ? Math.max(250, Math.round(feed.refreshMs))
         : fallback.refreshMs,
   }
-}
-
-function detectPresetId(layout: DashboardLayoutSettings): LayoutPresetId | 'custom' {
-  const matchedPreset = layoutPresets.find((preset) => {
-    return (
-      preset.layout.uiScale === layout.uiScale &&
-      preset.layout.overviewLayout === layout.overviewLayout &&
-      preset.layout.diagnosticsLayout === layout.diagnosticsLayout &&
-      preset.layout.systemsLayout === layout.systemsLayout &&
-      preset.layout.showCameraInSystems === layout.showCameraInSystems
-    )
-  })
-
-  return matchedPreset?.id ?? 'custom'
 }
 
 function loadPreferences(): DashboardPreferencesState {
@@ -166,7 +118,6 @@ function loadPreferences(): DashboardPreferencesState {
     return {
       layout: mergedLayout,
       cameraFeeds,
-      activePresetId: detectPresetId(mergedLayout),
     }
   } catch {
     return defaultPreferences
@@ -202,32 +153,17 @@ export function DashboardPreferencesProvider({ children }: PropsWithChildren) {
       return {
         ...current,
         layout: nextLayout,
-        activePresetId: detectPresetId(nextLayout),
       }
     })
-  }
-
-  const applyLayoutPreset = (presetId: LayoutPresetId) => {
-    const preset = layoutPresets.find((item) => item.id === presetId)
-    if (!preset) {
-      return
-    }
-
-    setPreferences((current) => ({
-      ...current,
-      layout: {
-        ...preset.layout,
-        layoutLocked: current.layout.layoutLocked,
-      },
-      activePresetId: preset.id,
-    }))
   }
 
   const resetLayout = () => {
     setPreferences((current) => ({
       ...current,
-      layout: defaultPreferences.layout,
-      activePresetId: 'factory',
+      layout: {
+        ...factoryLayout,
+        layoutLocked: current.layout.layoutLocked,
+      },
     }))
   }
 
@@ -253,10 +189,8 @@ export function DashboardPreferencesProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       preferences,
-      layoutPresets,
       activeCameraFeeds,
       setLayoutSetting,
-      applyLayoutPreset,
       resetLayout,
       updateCameraFeed,
     }),

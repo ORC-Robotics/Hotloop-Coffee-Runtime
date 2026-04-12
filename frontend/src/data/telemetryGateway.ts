@@ -5,6 +5,7 @@ import type {
   ControlModeFeed,
   RemoteDriverAction,
   RemoteDriverResponse,
+  RemoteDriverSessionMode,
   RemoteDriverStateCommand,
   TelemetryCatalogFeed,
   TelemetrySnapshot,
@@ -61,8 +62,9 @@ export async function sendRemoteDriverState(
 export async function sendRemoteDriverAction(
   action: RemoteDriverAction,
   source: string,
+  sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
-  return activeSource().sendRemoteDriverAction(action, source)
+  return activeSource().sendRemoteDriverAction(action, source, sessionMode)
 }
 
 export async function writeTelemetryTopicValue(

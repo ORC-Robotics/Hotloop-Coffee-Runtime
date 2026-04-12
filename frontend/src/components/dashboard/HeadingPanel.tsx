@@ -1,4 +1,4 @@
-import { formatDegrees } from '../../lib/format'
+import { clamp } from '../../lib/format'
 import type { HeadingData, UiTone } from '../../types/telemetry'
 import { DashboardCard } from './DashboardCard'
 import { StatusBadge } from './StatusBadge'
@@ -19,16 +19,22 @@ function polarPoint(cx: number, cy: number, radius: number, degrees: number) {
 function angularTone(error: number): UiTone {
   const magnitude = Math.abs(error)
   if (magnitude > 18) return 'critical'
-  if (magnitude > 8) return 'warning'
+  if (magnitude > 6) return 'warning'
   return 'good'
 }
 
+function angularStatus(error: number) {
+  const magnitude = Math.abs(error)
+  if (magnitude > 18) return 'Recovering'
+  if (magnitude > 6) return 'Correcting'
+  return 'Locked'
+}
+
 export function HeadingPanel({ data, tone }: HeadingPanelProps) {
-  const size = 360
+  const size = 116
   const center = size / 2
-  const radius = 126
-  const yawPoint = polarPoint(center, center, radius - 24, data.yawDeg)
-  const targetPoint = polarPoint(center, center, radius - 4, data.targetYawDeg)
+  const outerRadius = 45
+  const yawPoint = polarPoint(center, center, outerRadius - 8, data.yawDeg)
   const errorTone = angularTone(data.angularErrorDeg)
   const errorColor =
     errorTone === 'critical'
@@ -36,6 +42,7 @@ export function HeadingPanel({ data, tone }: HeadingPanelProps) {
       : errorTone === 'warning'
         ? 'var(--warning)'
         : 'var(--success)'
+  const errorWidth = `${clamp(Math.abs(data.angularErrorDeg) / 30, 0.08, 1) * 100}%`
 
   return (
     <DashboardCard
@@ -44,110 +51,88 @@ export function HeadingPanel({ data, tone }: HeadingPanelProps) {
       accent="accent"
       className="min-h-[0]"
       headerSlot={<StatusBadge tone={tone} label={tone === 'good' ? 'aligned' : tone === 'warning' ? 'correcting' : 'attention'} />}
+      bodyClassName="pt-3.5"
     >
-      <div className="flex h-full flex-col gap-3">
-        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 p-2.5">
-          <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto aspect-square w-full max-w-[320px]">
-            <circle cx={center} cy={center} r={radius + 18} fill="none" stroke="var(--gridLine)" strokeWidth="1.4" />
-            <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--gaugeTrack)" strokeWidth="4" />
+      <div className="grid gap-3 xl:grid-cols-2">
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 px-4 py-3.5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                Heading
+              </div>
+              <div className="mt-2 text-[2rem] font-semibold tracking-[-0.08em] text-[var(--text)]">
+                {data.yawDeg.toFixed(1)}°
+              </div>
+              <div className="mt-2 text-[0.84rem] font-semibold uppercase tracking-[0.12em] text-[var(--success)]">
+                Target: {data.targetYawDeg.toFixed(1)}°
+              </div>
+            </div>
 
-            {Array.from({ length: 36 }, (_, index) => {
-              const degrees = index * 10
-              const inner = index % 3 === 0 ? radius - 17 : radius - 10
-              const start = polarPoint(center, center, inner, degrees)
-              const end = polarPoint(center, center, radius + 5, degrees)
-              return (
-                <line
-                  key={degrees}
-                  x1={start.x}
-                  y1={start.y}
-                  x2={end.x}
-                  y2={end.y}
-                  stroke="var(--gaugeTick)"
-                  strokeWidth={index % 3 === 0 ? 1.8 : 1}
-                  opacity={index % 3 === 0 ? 0.95 : 0.45}
-                />
-              )
-            })}
+            <svg viewBox={`0 0 ${size} ${size}`} className="h-[88px] w-[88px] shrink-0">
+              <circle cx={center} cy={center} r={outerRadius + 7} fill="none" stroke="var(--gridLine)" strokeWidth="1.2" />
+              <circle cx={center} cy={center} r={outerRadius} fill="none" stroke="var(--gaugeTrack)" strokeWidth="3.6" />
 
-            {[0, 90, 180, 270].map((degrees) => {
-              const label = polarPoint(center, center, radius + 28, degrees)
-              return (
-                <text
-                  key={degrees}
-                  x={label.x}
-                  y={label.y}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill="var(--text-muted)"
-                  fontSize="12"
-                  fontFamily="IBM Plex Mono, monospace"
-                >
-                  {degrees}
-                </text>
-              )
-            })}
+              {([
+                ['N', 0],
+                ['E', 90],
+                ['S', 180],
+                ['W', 270],
+              ] as const).map(([label, degrees]) => {
+                const point = polarPoint(center, center, outerRadius + 13, degrees)
+                return (
+                  <text
+                    key={label}
+                    x={point.x}
+                    y={point.y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="var(--text-muted)"
+                    fontSize="11"
+                    fontFamily="IBM Plex Mono, monospace"
+                  >
+                    {label}
+                  </text>
+                )
+              })}
 
-            <line
-              x1={center}
-              y1={center}
-              x2={targetPoint.x}
-              y2={targetPoint.y}
-              stroke="var(--info)"
-              strokeWidth="2.8"
-              opacity="0.95"
-            />
-            <circle cx={targetPoint.x} cy={targetPoint.y} r="5.5" fill="var(--info)" />
-
-            <line
-              x1={center}
-              y1={center}
-              x2={yawPoint.x}
-              y2={yawPoint.y}
-              stroke="var(--accent)"
-              strokeWidth="5.4"
-              strokeLinecap="round"
-            />
-            <circle cx={center} cy={center} r="8" fill="var(--surface-raised)" stroke="var(--text)" strokeWidth="1.4" />
-
-            <text
-              x={center}
-              y={size - 24}
-              textAnchor="middle"
-              fill="var(--text)"
-              fontSize="32"
-              fontFamily="IBM Plex Mono, monospace"
-            >
-              {data.yawDeg.toFixed(1)}
-            </text>
-          </svg>
+              <line
+                x1={center}
+                y1={center}
+                x2={yawPoint.x}
+                y2={yawPoint.y}
+                stroke="var(--accent)"
+                strokeWidth="4"
+                strokeLinecap="round"
+              />
+              <circle cx={center} cy={center} r="5.5" fill="var(--surface-raised)" stroke="var(--text)" strokeWidth="1.2" />
+            </svg>
+          </div>
         </div>
 
-        <div className="grid gap-2.5 sm:grid-cols-3">
-          <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
-            <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Yaw</div>
-            <div className="mt-1.5 font-mono text-[1rem] text-[var(--text)]">{formatDegrees(data.yawDeg)}</div>
-          </div>
-          <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
-            <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Target yaw</div>
-            <div className="mt-1.5 font-mono text-[1rem] text-[var(--text)]">{formatDegrees(data.targetYawDeg)}</div>
-          </div>
-          <div
-            className="rounded-[16px] border px-3 py-2.5"
-            style={{
-              borderColor: `color-mix(in srgb, ${errorColor} 26%, var(--border))`,
-              background: errorTone === 'good' ? 'var(--success-soft)' : errorTone === 'warning' ? 'var(--warning-soft)' : 'var(--danger-soft)',
-            }}
-          >
-            <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Angular error</div>
-            <div className="mt-1.5 font-mono text-[1rem]" style={{ color: errorColor }}>
-              {formatDegrees(data.angularErrorDeg)}
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 px-4 py-3.5">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                Angular Error
+              </div>
+              <div className="mt-2 text-[2rem] font-semibold tracking-[-0.08em] text-[var(--text)]">
+                {Math.abs(data.angularErrorDeg).toFixed(1)}°
+              </div>
+            </div>
+            <div className="pb-1 text-[0.8rem] font-semibold uppercase tracking-[0.14em]" style={{ color: errorColor }}>
+              {angularStatus(data.angularErrorDeg)}
             </div>
           </div>
-        </div>
 
-        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/78 px-3 py-2 text-[0.75rem] text-[var(--text-muted)]">
-          Lateral error <span className="font-mono text-[var(--text)]">{data.lateralErrorM.toFixed(2)} m</span>
+          <div className="mt-4 h-2.5 rounded-full bg-[var(--background-subtle)]">
+            <div
+              className="h-2.5 rounded-full transition-all duration-200"
+              style={{
+                width: errorWidth,
+                background: errorColor,
+              }}
+            />
+          </div>
         </div>
       </div>
     </DashboardCard>

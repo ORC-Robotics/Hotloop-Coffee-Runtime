@@ -33,10 +33,6 @@ export function useControlMode() {
   const [selectedModeId, setSelectedModeId] = useState<string | null>(null)
 
   useEffect(() => {
-    setControlMode(createFallbackControlMode())
-    setBridgeStatus(createFallbackBridgeStatus())
-    setSelectedModeId(null)
-
     let cancelled = false
 
     const sync = async () => {
@@ -84,17 +80,18 @@ export function useControlMode() {
     }
   }, [mode])
 
-  const applyRequestedMode = async () => {
-    if (!selectedModeId) {
+  const applyRequestedMode = async (modeId = selectedModeId) => {
+    if (!modeId) {
       return
     }
 
     try {
-      const response = await requestControlModeChange(selectedModeId)
+      const response = await requestControlModeChange(modeId)
       setControlMode(response.controlMode)
       if (response.bridgeStatus) {
         setBridgeStatus(response.bridgeStatus)
       }
+      setSelectedModeId(response.controlMode.requestedModeId ?? response.controlMode.currentModeId ?? modeId)
     } catch {
       setControlMode((previous) => ({
         ...previous,

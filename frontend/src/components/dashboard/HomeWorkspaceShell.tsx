@@ -166,9 +166,6 @@ export function HomeWorkspaceShell() {
               {catalog.topics.length} live topics
             </div>
           </div>
-          <div className="mt-2 max-w-[66ch] text-[0.8rem] leading-6 text-[var(--text-muted)]">
-            Widgets now store their own topic, renderer, position, width, height and formatting rules. Drag to reposition, resize on the lower-right handle, and keep each page saved locally.
-          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

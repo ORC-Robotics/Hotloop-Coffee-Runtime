@@ -30,12 +30,14 @@ BATTERY_ESTIMATE_EMPTY_V = 11.1
 BATTERY_IDLE_DRAW_FLOOR_A = 8.0
 BATTERY_ACTIVE_DRAW_FLOOR_A = 22.0
 REMOTE_DRIVER_ACTIONS = {
+    "start",
     "enable_teleop",
     "enable_auto",
     "disable",
     "reset",
     "estop",
 }
+REMOTE_DRIVER_SESSION_MODES = {"teleop", "autonomous"}
 
 
 def utc_now() -> datetime:
@@ -478,7 +480,12 @@ class RemoteDriverManager:
             "message": "Remote driver packet published.",
         }, HTTPStatus.ACCEPTED
 
-    def publish_action(self, action: str, source: str) -> tuple[dict[str, Any], HTTPStatus]:
+    def publish_action(
+        self,
+        action: str,
+        source: str,
+        session_mode: str | None = None,
+    ) -> tuple[dict[str, Any], HTTPStatus]:
         if not self.client.is_connected():
             return {"error": "robot link offline"}, HTTPStatus.SERVICE_UNAVAILABLE
 
@@ -486,19 +493,34 @@ class RemoteDriverManager:
         if normalized_action not in REMOTE_DRIVER_ACTIONS:
             return {"error": f"unsupported action '{action}'"}, HTTPStatus.BAD_REQUEST
 
+        normalized_session_mode = session_mode.strip().lower() if session_mode else None
+        if normalized_action == "start":
+            if normalized_session_mode not in REMOTE_DRIVER_SESSION_MODES:
+                return {
+                    "error": "sessionMode must be 'teleop' or 'autonomous' when action is 'start'",
+                }, HTTPStatus.BAD_REQUEST
+        elif normalized_action == "enable_teleop":
+            normalized_session_mode = "teleop"
+        elif normalized_action == "enable_auto":
+            normalized_session_mode = "autonomous"
+
         safe_source = source.strip() or "ORION"
         zero_packet_ok = True
-        if normalized_action in {"disable", "reset", "estop", "enable_auto"}:
+        if normalized_action in {"start", "disable", "reset", "estop", "enable_auto"}:
             zero_packet_ok = self._publish_zero_packet(safe_source)
 
         self.action_sequence += 1
-        action_ok = all(
-            (
-                self.client.put_string("Control/Remote Driver/Source", safe_source),
-                self.client.put_string("Control/Remote Driver/Requested Action", normalized_action),
-                self.client.put_number("Control/Remote Driver/Action Sequence", float(self.action_sequence)),
+        publications = [
+            self.client.put_string("Control/Remote Driver/Source", safe_source),
+            self.client.put_string("Control/Remote Driver/Requested Action", normalized_action),
+            self.client.put_number("Control/Remote Driver/Action Sequence", float(self.action_sequence)),
+        ]
+        if normalized_session_mode is not None:
+            publications.insert(
+                2,
+                self.client.put_string("Control/Remote Driver/Requested Session Mode", normalized_session_mode),
             )
-        )
+        action_ok = all(publications)
 
         if not zero_packet_ok or not action_ok:
             return {"error": "failed to publish remote driver action"}, HTTPStatus.BAD_GATEWAY
@@ -925,6 +947,11 @@ def build_handler(bridge: TelemetryBridge):
                 response, status = bridge.remote_driver.publish_action(
                     action=str(driver_payload.get("action", "")),
                     source=str(driver_payload.get("source", "ORION")),
+                    session_mode=(
+                        str(driver_payload.get("sessionMode")).strip()
+                        if driver_payload.get("sessionMode") is not None
+                        else None
+                    ),
                 )
                 self._send_json(
                     {

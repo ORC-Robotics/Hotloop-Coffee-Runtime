@@ -55,8 +55,6 @@ export function useTelemetryCatalog(onCatalog?: (catalog: TelemetryCatalogFeed) 
   })
 
   useEffect(() => {
-    setCatalog(createFallbackCatalog())
-
     return subscribeTelemetryCatalog(
       (incoming) => {
         handleCatalog(incoming)
@@ -82,7 +80,7 @@ export function useTelemetryCatalog(onCatalog?: (catalog: TelemetryCatalogFeed) 
       },
       POLL_MS,
     )
-  }, [handleCatalog, mode])
+  }, [mode])
 
   return catalog
 }

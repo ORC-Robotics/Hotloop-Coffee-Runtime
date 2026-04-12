@@ -1,6 +1,6 @@
 import { cn } from '../../lib/cn'
 
-export type SecondaryWorkspaceId = 'custom-telemetry' | 'remote-driver' | 'camera-wall'
+export type SecondaryWorkspaceId = 'custom-telemetry' | 'camera-wall'
 
 interface SecondaryWorkspaceBarProps {
   open: boolean
@@ -19,11 +19,6 @@ const workspaces: Array<{
     id: 'custom-telemetry',
     label: 'Custom Telemetry',
     hint: 'browse every published topic and pin live cards',
-  },
-  {
-    id: 'remote-driver',
-    label: 'Remote Driver',
-    hint: 'enable teleop, e-stop and drive the robot from ORION',
   },
   {
     id: 'camera-wall',
@@ -47,10 +42,10 @@ export function SecondaryWorkspaceBar({
             Secondary Workspace Access
           </div>
           <div className="mt-1 text-[0.92rem] font-semibold tracking-[-0.02em] text-[var(--text)]">
-            Keep the main pages clean and open hidden tools only when you need them.
+            Keep the main pages focused and open only the extra telemetry surfaces when needed.
           </div>
           <div className="mt-1 text-[0.8rem] leading-6 text-[var(--text-muted)]">
-            Hidden tooling lives here so we can support different robots, remote driving and operator-specific workspaces without crowding the main dashboard.
+            The home rail now owns remote operation. This bar stays reserved for raw telemetry exploration and dedicated camera walls.
           </div>
         </div>
 

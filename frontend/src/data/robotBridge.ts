@@ -14,6 +14,7 @@ import type {
   RemoteDriverActionCommand,
   RemoteDriverFeed,
   RemoteDriverResponse,
+  RemoteDriverSessionMode,
   RemoteDriverStateCommand,
   TelemetryCatalogFeed,
   TelemetrySnapshot,
@@ -225,12 +226,14 @@ export async function sendRemoteDriverState(
 export async function sendRemoteDriverAction(
   action: RemoteDriverAction,
   source: string,
+  sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
   const command: RemoteDriverActionCommand = {
     type: 'send_remote_driver_action',
     payload: {
       action,
       source,
+      sessionMode,
     },
   }
 

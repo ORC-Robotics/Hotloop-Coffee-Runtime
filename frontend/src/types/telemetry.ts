@@ -19,9 +19,9 @@ export type ControlModeSyncStatus =
   | 'stale'
   | 'unavailable'
 export type RemoteDriverMode = 'disabled' | 'teleop' | 'autonomous'
+export type RemoteDriverSessionMode = Extract<RemoteDriverMode, 'teleop' | 'autonomous'>
 export type RemoteDriverAction =
-  | 'enable_teleop'
-  | 'enable_auto'
+  | 'start'
   | 'disable'
   | 'reset'
   | 'estop'
@@ -227,6 +227,7 @@ export type RemoteDriverActionCommand = {
   payload: {
     action: RemoteDriverAction
     source: string
+    sessionMode?: RemoteDriverSessionMode
   }
 }
 

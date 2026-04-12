@@ -8,12 +8,13 @@ import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type {
   BridgeStatus,
   RemoteDriverAction,
+  RemoteDriverSessionMode,
   RemoteDriverStatus,
 } from '../types/telemetry'
 
 const STATUS_POLL_MS = 320
 const PREVIEW_POLL_MS = 80
-const DRIVER_SOURCE = 'ORION Desktop'
+const DRIVER_SOURCE = 'Hotloop Desktop'
 const INPUT_DEADBAND = 0.08
 
 type DriverPreview = {
@@ -26,7 +27,7 @@ type DriverPreview = {
 }
 
 type CommandState = {
-  tone: 'neutral' | 'warning' | 'good' | 'critical'
+  tone: 'neutral' | 'warning' | 'good' | 'critical' | 'info'
   message: string
 }
 
@@ -37,13 +38,6 @@ type KeyboardState = {
   reverse: boolean
   rotateLeft: boolean
   rotateRight: boolean
-}
-
-type PanelDriveState = {
-  x: number
-  y: number
-  z: number
-  active: boolean
 }
 
 type InputSample = DriverPreview
@@ -63,7 +57,7 @@ function createFallbackRemoteDriver(): RemoteDriverStatus {
     mode: 'disabled',
     heartbeatFresh: false,
     heartbeatAgeSec: null,
-    source: 'ORION',
+    source: 'Hotloop',
     inputSource: 'idle',
     lastAction: 'none',
     driveX: 0,
@@ -111,12 +105,10 @@ function createEmptyKeyboardState(): KeyboardState {
   }
 }
 
-function createIdlePanelDriveState(): PanelDriveState {
+function createDefaultMessage(): CommandState {
   return {
-    x: 0,
-    y: 0,
-    z: 0,
-    active: false,
+    tone: 'neutral',
+    message: 'Select Teleoperado or Autonomo, then press Start.',
   }
 }
 
@@ -198,7 +190,6 @@ function readGamepadAxes(gamepad: Gamepad | null) {
 function combineInputs(
   gamepadState: ReturnType<typeof readGamepadAxes>,
   keyboardState: ReturnType<typeof readKeyboardAxes>,
-  panelState: PanelDriveState,
 ): InputSample {
   const activeSources: string[] = []
 
@@ -208,9 +199,6 @@ function combineInputs(
   if (keyboardState.active) {
     activeSources.push('keyboard')
   }
-  if (panelState.active) {
-    activeSources.push('panel')
-  }
 
   const inputSource =
     activeSources.length === 0 ? 'idle' : activeSources.length === 1 ? activeSources[0] : 'hybrid'
@@ -219,9 +207,9 @@ function combineInputs(
     gamepadConnected: gamepadState.connected,
     gamepadLabel: gamepadState.label,
     inputSource,
-    x: clampUnit(gamepadState.x + keyboardState.x + panelState.x),
-    y: clampUnit(gamepadState.y + keyboardState.y + panelState.y),
-    z: clampUnit(gamepadState.z + keyboardState.z + panelState.z),
+    x: clampUnit(gamepadState.x + keyboardState.x),
+    y: clampUnit(gamepadState.y + keyboardState.y),
+    z: clampUnit(gamepadState.z + keyboardState.z),
   }
 }
 
@@ -240,41 +228,56 @@ export function useRemoteDriver(active: boolean) {
   const { mode } = useTelemetryMode()
   const [remoteDriver, setRemoteDriver] = useState<RemoteDriverStatus>(createFallbackRemoteDriver())
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(createFallbackBridgeStatus())
-  const [controlsArmed, setControlsArmed] = useState(false)
   const [gyroAssist, setGyroAssist] = useState(true)
   const [preview, setPreview] = useState<DriverPreview>(createIdlePreview())
-  const [commandState, setCommandState] = useState<CommandState>({
-    tone: 'neutral',
-    message: 'Arm controls, then enable teleop to drive from ORION.',
-  })
+  const [commandState, setCommandState] = useState<CommandState>(createDefaultMessage())
   const keyboardStateRef = useRef<KeyboardState>(createEmptyKeyboardState())
-  const panelDriveStateRef = useRef<PanelDriveState>(createIdlePanelDriveState())
   const preferredGamepadIndexRef = useRef<number | null>(null)
-  const controlsArmedRef = useRef(controlsArmed)
   const gyroAssistRef = useRef(gyroAssist)
   const wasTransmittingRef = useRef(false)
-
-  useEffect(() => {
-    controlsArmedRef.current = controlsArmed
-  }, [controlsArmed])
 
   useEffect(() => {
     gyroAssistRef.current = gyroAssist
   }, [gyroAssist])
 
-  useEffect(() => {
-    if (!active) {
-      if (wasTransmittingRef.current) {
-        void sendRemoteDriverState(createZeroPacket(gyroAssistRef.current))
+  const flushZeroPacket = async (nextState?: CommandState) => {
+    keyboardStateRef.current = createEmptyKeyboardState()
+    startTransition(() => {
+      setPreview((current) => ({
+        ...current,
+        inputSource: 'idle',
+        x: 0,
+        y: 0,
+        z: 0,
+      }))
+    })
+
+    if (!wasTransmittingRef.current) {
+      if (nextState) {
+        setCommandState(nextState)
       }
-      wasTransmittingRef.current = false
-      setControlsArmed(false)
-      keyboardStateRef.current = createEmptyKeyboardState()
-      panelDriveStateRef.current = createIdlePanelDriveState()
-      setPreview(createIdlePreview())
       return
     }
 
+    try {
+      const response = await sendRemoteDriverState(createZeroPacket(gyroAssistRef.current))
+      if (response.remoteDriver) {
+        setRemoteDriver(response.remoteDriver)
+      }
+      if (response.bridgeStatus) {
+        setBridgeStatus(response.bridgeStatus)
+      }
+    } catch {
+      // Keep shutdown paths quiet. The robot-side timeout remains the safety net.
+    } finally {
+      wasTransmittingRef.current = false
+      if (nextState) {
+        setCommandState(nextState)
+      }
+    }
+  }
+
+  useEffect(() => {
     let cancelled = false
 
     const syncStatus = async () => {
@@ -287,6 +290,9 @@ export function useRemoteDriver(active: boolean) {
         setRemoteDriver(response.remoteDriver)
         if (response.bridgeStatus) {
           setBridgeStatus(response.bridgeStatus)
+        }
+        if (response.remoteDriver.mode !== 'teleop' || !active) {
+          setGyroAssist(response.remoteDriver.gyroAssist)
         }
       } catch {
         if (cancelled) {
@@ -358,12 +364,9 @@ export function useRemoteDriver(active: boolean) {
     }
 
     const handleBlur = () => {
-      keyboardStateRef.current = createEmptyKeyboardState()
-      panelDriveStateRef.current = createIdlePanelDriveState()
-      setControlsArmed(false)
-      setCommandState({
+      void flushZeroPacket({
         tone: 'warning',
-        message: 'Controls disarmed because the window lost focus.',
+        message: 'Teleop heartbeat paused because the Hotloop window lost focus.',
       })
     }
 
@@ -396,7 +399,7 @@ export function useRemoteDriver(active: boolean) {
       window.removeEventListener('gamepaddisconnected', handleGamepadChange)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [active, mode])
+  }, [active, mode, remoteDriver.mode])
 
   useEffect(() => {
     if (!active) {
@@ -412,14 +415,13 @@ export function useRemoteDriver(active: boolean) {
       const inputSample = combineInputs(
         gamepadState,
         readKeyboardAxes(keyboardStateRef.current),
-        panelDriveStateRef.current,
       )
 
       startTransition(() => {
         setPreview(inputSample)
       })
 
-      if (!controlsArmedRef.current) {
+      if (remoteDriver.mode !== 'teleop') {
         return
       }
 
@@ -448,7 +450,7 @@ export function useRemoteDriver(active: boolean) {
         if (!cancelled) {
           setCommandState({
             tone: 'critical',
-            message: 'Failed to stream remote driver packets to the bridge.',
+            message: 'Failed to stream teleop heartbeat packets to the bridge.',
           })
         }
       }
@@ -463,52 +465,58 @@ export function useRemoteDriver(active: boolean) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [active, mode])
+  }, [active, mode, remoteDriver.mode])
 
   useEffect(() => {
-    if (controlsArmed) {
+    if (active && remoteDriver.mode === 'teleop') {
       setCommandState({
         tone: 'good',
-        message: 'Remote packets are armed. Enable teleop when you are ready to move.',
+        message: 'Teleop session active. Keyboard and joystick input are being streamed automatically.',
+      })
+      return
+    }
+
+    if (active && remoteDriver.mode === 'autonomous') {
+      void flushZeroPacket({
+        tone: 'info',
+        message: 'Autonomous session active. Disable before changing mode or automode.',
       })
       return
     }
 
     if (!active) {
+      void flushZeroPacket({
+        tone: 'neutral',
+        message: 'Return to the Overview control rail to send teleop heartbeat packets.',
+      })
       return
     }
 
-    const sendZeroPacket = async () => {
-      if (!wasTransmittingRef.current) {
-        return
-      }
+    void flushZeroPacket(createDefaultMessage())
+  }, [active, remoteDriver.mode])
 
-      try {
-        const response = await sendRemoteDriverState(createZeroPacket(gyroAssistRef.current))
-        if (response.remoteDriver) {
-          setRemoteDriver(response.remoteDriver)
-        }
-        if (response.bridgeStatus) {
-          setBridgeStatus(response.bridgeStatus)
-        }
-      } catch {
-        // Keep the UI calm here; the robot will still auto-disable if the heartbeat expires.
-      } finally {
-        wasTransmittingRef.current = false
-      }
+  const dispatchAction = async (
+    action: RemoteDriverAction,
+    sessionMode?: RemoteDriverSessionMode,
+  ) => {
+    if (action === 'start' && !sessionMode) {
+      setCommandState({
+        tone: 'critical',
+        message: 'Start requires a target session mode.',
+      })
+      return
     }
 
-    void sendZeroPacket()
-  }, [active, controlsArmed, mode])
+    const actionLabel =
+      action === 'start' ? `start ${sessionMode === 'autonomous' ? 'autonomous' : 'teleop'}` : action
 
-  const dispatchAction = async (action: RemoteDriverAction) => {
     setCommandState({
       tone: 'warning',
-      message: `Sending ${action.replace('_', ' ')} to the robot.`,
+      message: `Sending ${actionLabel} to the robot.`,
     })
 
     try {
-      const response = await sendRemoteDriverAction(action, DRIVER_SOURCE)
+      const response = await sendRemoteDriverAction(action, DRIVER_SOURCE, sessionMode)
       if (response.remoteDriver) {
         setRemoteDriver(response.remoteDriver)
       }
@@ -516,8 +524,21 @@ export function useRemoteDriver(active: boolean) {
         setBridgeStatus(response.bridgeStatus)
       }
 
+      if (action !== 'start') {
+        keyboardStateRef.current = createEmptyKeyboardState()
+        startTransition(() => {
+          setPreview((current) => ({
+            ...current,
+            inputSource: 'idle',
+            x: 0,
+            y: 0,
+            z: 0,
+          }))
+        })
+      }
+
       if (action === 'disable' || action === 'reset' || action === 'estop') {
-        setControlsArmed(false)
+        wasTransmittingRef.current = false
       }
 
       setCommandState({
@@ -532,27 +553,14 @@ export function useRemoteDriver(active: boolean) {
     }
   }
 
-  const setPanelDriveState = (next: Omit<PanelDriveState, 'active'> | null) => {
-    panelDriveStateRef.current = next
-      ? {
-          x: applyDeadband(next.x),
-          y: applyDeadband(next.y),
-          z: applyDeadband(next.z),
-          active: Math.abs(next.x) > 0 || Math.abs(next.y) > 0 || Math.abs(next.z) > 0,
-        }
-      : createIdlePanelDriveState()
-  }
-
   return {
     remoteDriver,
     bridgeStatus,
-    controlsArmed,
-    setControlsArmed,
     gyroAssist,
     setGyroAssist,
     preview,
     commandState,
     dispatchAction,
-    setPanelDriveState,
+    teleopStreaming: active && remoteDriver.mode === 'teleop',
   }
 }

@@ -50,6 +50,16 @@ export function OverviewCards({ snapshot, derived, layoutMode = 'balanced' }: Ov
       : snapshot.systems.lidarHealthy || snapshot.systems.validScan || snapshot.systems.navxConnected
         ? 'warning'
         : 'critical'
+  const headingLabel =
+    derived.alignmentTone === 'good'
+      ? 'aligned'
+      : derived.alignmentTone === 'warning'
+        ? 'correcting'
+        : 'attention'
+  const commandActive =
+    Math.abs(snapshot.commands.center) > 0.08 ||
+    Math.abs(snapshot.commands.forward) > 0.08 ||
+    Math.abs(snapshot.commands.rotation) > 0.08
 
   const items: OverviewStatusItem[] = [
     {
@@ -63,19 +73,19 @@ export function OverviewCards({ snapshot, derived, layoutMode = 'balanced' }: Ov
       tone: batteryTone,
     },
     {
-      label: 'Sensors',
-      value: snapshot.perception.frontBlocked ? 'blocked' : snapshot.perception.frontSlow ? 'caution' : 'clear',
+      label: 'Systems',
+      value: sensorTone === 'good' ? 'healthy' : sensorTone === 'warning' ? 'degraded' : 'critical',
       tone: sensorTone,
     },
     {
-      label: 'Control',
-      value: snapshot.connection.online ? 'ready' : 'standby',
-      tone: snapshot.connection.online ? 'good' : 'neutral',
+      label: 'Heading',
+      value: headingLabel,
+      tone: derived.alignmentTone,
     },
     {
-      label: 'Reactive',
-      value: snapshot.reactive.state.toLowerCase().replace(/_/g, ' '),
-      tone: derived.robotHealthTone === 'critical' ? 'warning' : 'info',
+      label: 'Drive',
+      value: commandActive ? 'active' : 'hold',
+      tone: commandActive ? 'info' : 'neutral',
     },
   ]
 

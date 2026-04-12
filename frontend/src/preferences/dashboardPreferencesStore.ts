@@ -4,7 +4,6 @@ export type UiScaleId = 'compact' | 'standard' | 'large'
 export type OverviewLayoutId = 'balanced' | 'pilot' | 'dataWall'
 export type DiagnosticsLayoutId = 'split' | 'deepDive'
 export type SystemsLayoutId = 'wide' | 'stacked' | 'cameraFocus'
-export type LayoutPresetId = 'factory' | 'pit' | 'analyst'
 export type CameraFeedKind = 'mjpeg' | 'snapshot' | 'video'
 
 export interface CameraFeedConfig {
@@ -28,25 +27,15 @@ export interface DashboardLayoutSettings {
 export interface DashboardPreferencesState {
   layout: DashboardLayoutSettings
   cameraFeeds: CameraFeedConfig[]
-  activePresetId: LayoutPresetId | 'custom'
-}
-
-export interface LayoutPresetDefinition {
-  id: LayoutPresetId
-  label: string
-  description: string
-  layout: Omit<DashboardLayoutSettings, 'layoutLocked'>
 }
 
 export interface DashboardPreferencesContextValue {
   preferences: DashboardPreferencesState
-  layoutPresets: LayoutPresetDefinition[]
   activeCameraFeeds: CameraFeedConfig[]
   setLayoutSetting: <K extends keyof DashboardLayoutSettings>(
     key: K,
     value: DashboardLayoutSettings[K],
   ) => void
-  applyLayoutPreset: (presetId: LayoutPresetId) => void
   resetLayout: () => void
   updateCameraFeed: (feedId: string, patch: Partial<CameraFeedConfig>) => void
 }

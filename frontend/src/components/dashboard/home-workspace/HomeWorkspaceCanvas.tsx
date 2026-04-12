@@ -484,7 +484,7 @@ export function HomeWorkspaceCanvas({
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', handlePointerUp)
     }
-  }, [handlePointerMove, handlePointerUp, interaction])
+  }, [interaction])
 
   return (
     <div

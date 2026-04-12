@@ -5,7 +5,6 @@ import type {
   CameraFeedConfig,
   CameraFeedKind,
   DiagnosticsLayoutId,
-  LayoutPresetId,
   OverviewLayoutId,
   SystemsLayoutId,
   UiScaleId,
@@ -46,9 +45,13 @@ const cameraKinds: Array<{ id: CameraFeedKind; label: string }> = [
 
 function GearIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current" strokeWidth="1.8">
-      <path d="M10.4 2.9h3.2l.7 2.5a7.4 7.4 0 0 1 1.8.8l2.3-1.2 2.2 2.2-1.2 2.3c.34.57.61 1.18.8 1.83l2.5.68v3.14l-2.5.7a7.54 7.54 0 0 1-.8 1.8l1.2 2.3-2.2 2.22-2.3-1.22a7.38 7.38 0 0 1-1.82.77l-.68 2.53h-3.16l-.7-2.53a7.47 7.47 0 0 1-1.8-.77l-2.3 1.22-2.24-2.22 1.24-2.3a7.3 7.3 0 0 1-.79-1.8L1.9 13.5v-3.14l2.52-.68a7.4 7.4 0 0 1 .8-1.83L4 5.52 6.24 3.3l2.28 1.2a7.3 7.3 0 0 1 1.86-.78z" />
-      <circle cx="12" cy="12" r="3.3" />
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current" strokeWidth="1.7">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M10.325 4.317a1.724 1.724 0 0 1 3.35 0 1.724 1.724 0 0 0 2.574 1.066 1.724 1.724 0 0 1 2.48 2.48 1.724 1.724 0 0 0 1.065 2.574 1.724 1.724 0 0 1 0 3.35 1.724 1.724 0 0 0-1.066 2.574 1.724 1.724 0 0 1-2.48 2.48 1.724 1.724 0 0 0-2.574 1.065 1.724 1.724 0 0 1-3.35 0 1.724 1.724 0 0 0-2.574-1.066 1.724 1.724 0 0 1-2.48-2.48 1.724 1.724 0 0 0-1.065-2.574 1.724 1.724 0 0 1 0-3.35 1.724 1.724 0 0 0 1.066-2.574 1.724 1.724 0 0 1 2.48-2.48 1.724 1.724 0 0 0 2.574-1.065Z"
+      />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
   )
 }
@@ -196,9 +199,7 @@ export function DashboardSettingsLauncher() {
   const { themeId, setThemeId } = useTheme()
   const {
     preferences,
-    layoutPresets,
     setLayoutSetting,
-    applyLayoutPreset,
     resetLayout,
     updateCameraFeed,
   } = useDashboardPreferences()
@@ -245,7 +246,7 @@ export function DashboardSettingsLauncher() {
                     Dashboard Settings
                   </div>
                   <div className="mt-1 text-[1.2rem] font-semibold tracking-[-0.04em] text-[var(--text)]">
-                    Themes, layout presets and camera slots
+                    Themes, layout scale and camera slots
                   </div>
                   <div className="mt-1 text-[0.82rem] leading-6 text-[var(--text-muted)]">
                     Everything here is saved locally for this operator station.
@@ -284,48 +285,21 @@ export function DashboardSettingsLauncher() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                        Layout Presets
+                        Layout Settings
                       </div>
                       <div className="mt-1 text-[0.9rem] text-[var(--text)]">
-                        Load a ready-made model, then fine tune the existing pages.
+                        The factory layout is the only baseline. Fine tune the pages directly and reset when needed.
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <StatusBadge tone={preferences.activePresetId === 'custom' ? 'warning' : 'good'} label={preferences.activePresetId} />
-                      <label className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-3 py-2 text-[0.76rem] text-[var(--text)]">
-                        <input
-                          type="checkbox"
-                          checked={layoutLocked}
-                          onChange={(event) => setLayoutSetting('layoutLocked', event.target.checked)}
-                          className="h-4 w-4 accent-[var(--primary)]"
-                        />
-                        Lock layout
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {layoutPresets.map((preset) => {
-                      const active = preferences.activePresetId === preset.id
-
-                      return (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          onClick={() => applyLayoutPreset(preset.id as LayoutPresetId)}
-                          disabled={layoutLocked}
-                          className={cn(
-                            'grid gap-2 rounded-[20px] border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                            active
-                              ? 'border-[var(--primary)] bg-[var(--primary-soft)]/76'
-                              : 'border-[var(--border)] bg-[var(--surface-alt)]/76 hover:bg-[var(--surface-alt)]',
-                          )}
-                        >
-                          <div className="text-[0.8rem] font-semibold text-[var(--text)]">{preset.label}</div>
-                          <div className="text-[0.74rem] leading-5 text-[var(--text-muted)]">{preset.description}</div>
-                        </button>
-                      )
-                    })}
+                    <label className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-alt)]/76 px-3 py-2 text-[0.76rem] text-[var(--text)]">
+                      <input
+                        type="checkbox"
+                        checked={layoutLocked}
+                        onChange={(event) => setLayoutSetting('layoutLocked', event.target.checked)}
+                        className="h-4 w-4 accent-[var(--primary)]"
+                      />
+                      Lock layout
+                    </label>
                   </div>
 
                   <div className="grid gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4 md:grid-cols-2">
@@ -376,7 +350,7 @@ export function DashboardSettingsLauncher() {
                       onClick={resetLayout}
                       className="rounded-full border border-[var(--border)] bg-[var(--surface)]/76 px-4 py-2 text-[0.74rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface)]"
                     >
-                      Reset to default
+                      Reset to factory
                     </button>
                   </div>
                 </section>
