@@ -66,17 +66,20 @@ export default function App() {
   const [secondaryBarOpen, setSecondaryBarOpen] = useState(false)
   const [activeWorkspace, setActiveWorkspace] = useState<SecondaryWorkspaceId | null>(null)
   const hasConfiguredCameraFeeds = activeCameraFeeds.length > 0
-  const homeSurfaceActive = activeTab === 'overview' && activeWorkspace === null
   const activeAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.currentModeId)
   const requestedAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.requestedModeId)
 
   const overviewMain = (
     <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_336px]">
       <div className="min-h-0">
-        <HomeWorkspaceShell />
+        <HomeWorkspaceShell
+          snapshot={snapshot}
+          derived={derived}
+          alerts={alerts}
+          batteryHistory={batteryHistory}
+        />
       </div>
       <OverviewOperatorRail
-        active={homeSurfaceActive}
         controlMode={controlMode}
         selectedModeId={selectedModeId}
         onSelectMode={setSelectedModeId}

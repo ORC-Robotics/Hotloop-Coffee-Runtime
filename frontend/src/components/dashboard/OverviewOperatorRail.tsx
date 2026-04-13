@@ -8,7 +8,6 @@ import { DashboardCard } from './DashboardCard'
 import { StatusBadge } from './StatusBadge'
 
 interface OverviewOperatorRailProps {
-  active: boolean
   controlMode: ControlModeState
   selectedModeId: string | null
   onSelectMode: (modeId: string | null) => void
@@ -66,7 +65,6 @@ function streamTone(
 }
 
 export function OverviewOperatorRail({
-  active,
   controlMode,
   selectedModeId,
   onSelectMode,
@@ -81,7 +79,7 @@ export function OverviewOperatorRail({
     commandState,
     dispatchAction,
     teleopStreaming,
-  } = useRemoteDriver(active)
+  } = useRemoteDriver()
   const [selectedSessionMode, setSelectedSessionMode] = useState<RemoteDriverSessionMode>('teleop')
   const sessionActive = remoteDriver.mode !== 'disabled'
   const autoModeRequired = selectedSessionMode === 'autonomous'
@@ -99,6 +97,14 @@ export function OverviewOperatorRail({
     : !robotLinkOnline
       ? 'Bridge backend online, waiting for robot link. Use reconnect or update the robot host/IP below.'
       : bridgeStatus.message ?? 'Bridge backend online and synchronized with the robot.'
+
+  const handleStart = async () => {
+    if (selectedSessionMode === 'autonomous' && selectedModeId) {
+      await onApplyMode(selectedModeId)
+    }
+
+    await dispatchAction('start', selectedSessionMode)
+  }
 
   return (
     <div className="grid gap-3">
@@ -169,7 +175,7 @@ export function OverviewOperatorRail({
             <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => void dispatchAction('start', selectedSessionMode)}
+                onClick={() => void handleStart()}
                 disabled={!canStart}
                 className={cn(
                   'rounded-[14px] border px-4 py-3 text-[0.8rem] font-semibold uppercase tracking-[0.14em] transition-colors',

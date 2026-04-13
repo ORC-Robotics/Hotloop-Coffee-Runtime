@@ -1,3 +1,9 @@
+import {
+  getHomeWorkspacePresetDefinition,
+  isHomeWorkspacePresetId,
+  type HomeWorkspacePresetId,
+} from './homeWorkspacePresets'
+
 export type HomeWorkspaceWidgetRenderer =
   | 'auto'
   | 'number'
@@ -21,17 +27,28 @@ export interface HomeWorkspaceWidgetConfig {
   criticalMax: number | null
 }
 
-export interface HomeWorkspaceWidget {
+interface HomeWorkspaceWidgetBase {
   id: string
   title: string
-  topicKey: string | null
-  renderer: HomeWorkspaceWidgetRenderer
   x: number
   y: number
   w: number
   h: number
+}
+
+export interface HomeWorkspaceTopicWidget extends HomeWorkspaceWidgetBase {
+  kind: 'topic'
+  topicKey: string | null
+  renderer: HomeWorkspaceWidgetRenderer
   config: HomeWorkspaceWidgetConfig
 }
+
+export interface HomeWorkspacePresetWidget extends HomeWorkspaceWidgetBase {
+  kind: 'preset'
+  presetId: HomeWorkspacePresetId
+}
+
+export type HomeWorkspaceWidget = HomeWorkspaceTopicWidget | HomeWorkspacePresetWidget
 
 export interface HomeWorkspacePage {
   id: string
@@ -57,7 +74,8 @@ interface LegacyHomeWorkspacePage {
   slots?: LegacyHomeWorkspaceSlot[]
 }
 
-export const HOME_WORKSPACE_STORAGE_KEY = 'orion.home-workspace.v2'
+export const HOME_WORKSPACE_STORAGE_KEY = 'orion.home-workspace.v3'
+export const HOME_WORKSPACE_V2_STORAGE_KEY = 'orion.home-workspace.v2'
 export const HOME_WORKSPACE_LEGACY_STORAGE_KEY = 'orion.home-workspace.v1'
 export const HOME_WORKSPACE_MAX_PAGES = 8
 export const HOME_WORKSPACE_GRID_COLUMNS = 12
@@ -103,6 +121,18 @@ function sanitizeRenderer(value: unknown): HomeWorkspaceWidgetRenderer {
     : 'auto'
 }
 
+export function createDefaultWidgetConfig(): HomeWorkspaceWidgetConfig {
+  return {
+    compact: false,
+    decimals: 1,
+    units: '',
+    warningMin: null,
+    warningMax: null,
+    criticalMin: null,
+    criticalMax: null,
+  }
+}
+
 function sanitizeWidgetConfig(value: unknown): HomeWorkspaceWidgetConfig {
   if (!value || typeof value !== 'object') {
     return createDefaultWidgetConfig()
@@ -124,7 +154,15 @@ function sanitizeWidgetConfig(value: unknown): HomeWorkspaceWidgetConfig {
   }
 }
 
-function clampWidgetRect(widget: HomeWorkspaceWidget) {
+export function isHomeWorkspaceTopicWidget(widget: HomeWorkspaceWidget): widget is HomeWorkspaceTopicWidget {
+  return widget.kind === 'topic'
+}
+
+export function isHomeWorkspacePresetWidget(widget: HomeWorkspaceWidget): widget is HomeWorkspacePresetWidget {
+  return widget.kind === 'preset'
+}
+
+function clampWidgetRect<T extends HomeWorkspaceWidget>(widget: T): T {
   const w = Math.max(HOME_WORKSPACE_MIN_WIDGET_W, Math.min(HOME_WORKSPACE_MAX_WIDGET_W, widget.w))
   const h = Math.max(HOME_WORKSPACE_MIN_WIDGET_H, Math.min(HOME_WORKSPACE_MAX_WIDGET_H, widget.h))
   const x = Math.max(0, Math.min(HOME_WORKSPACE_GRID_COLUMNS - w, widget.x))
@@ -174,7 +212,7 @@ export function findFreeWidgetPosition(
   return { x: 0, y: startY }
 }
 
-export function placeWidgetInLayout(widgets: HomeWorkspaceWidget[], widget: HomeWorkspaceWidget) {
+export function placeWidgetInLayout<T extends HomeWorkspaceWidget>(widgets: HomeWorkspaceWidget[], widget: T): T {
   const clamped = clampWidgetRect(widget)
   const position = findFreeWidgetPosition(widgets, clamped.w, clamped.h, clamped.x, clamped.y)
   return {
@@ -184,23 +222,12 @@ export function placeWidgetInLayout(widgets: HomeWorkspaceWidget[], widget: Home
   }
 }
 
-function createDefaultWidgetConfig(): HomeWorkspaceWidgetConfig {
-  return {
-    compact: false,
-    decimals: 1,
-    units: '',
-    warningMin: null,
-    warningMax: null,
-    criticalMin: null,
-    criticalMax: null,
-  }
-}
-
 export function createHomeWorkspaceWidget(
   widgets: HomeWorkspaceWidget[],
-  overrides: Partial<HomeWorkspaceWidget> = {},
-): HomeWorkspaceWidget {
-  const base: HomeWorkspaceWidget = {
+  overrides: Partial<HomeWorkspaceTopicWidget> = {},
+): HomeWorkspaceTopicWidget {
+  const base: HomeWorkspaceTopicWidget = {
+    kind: 'topic',
     id: typeof overrides.id === 'string' && overrides.id ? overrides.id : createId('widget'),
     title: typeof overrides.title === 'string' && overrides.title.trim() ? overrides.title.trim() : 'New Widget',
     topicKey: typeof overrides.topicKey === 'string' && overrides.topicKey.trim() ? overrides.topicKey.trim() : null,
@@ -213,6 +240,26 @@ export function createHomeWorkspaceWidget(
       ...createDefaultWidgetConfig(),
       ...sanitizeWidgetConfig(overrides.config),
     },
+  }
+
+  return placeWidgetInLayout(widgets, base)
+}
+
+export function createHomeWorkspacePresetWidget(
+  widgets: HomeWorkspaceWidget[],
+  presetId: HomeWorkspacePresetId,
+  overrides: Partial<HomeWorkspacePresetWidget> = {},
+): HomeWorkspacePresetWidget {
+  const preset = getHomeWorkspacePresetDefinition(presetId)
+  const base: HomeWorkspacePresetWidget = {
+    kind: 'preset',
+    id: typeof overrides.id === 'string' && overrides.id ? overrides.id : createId('widget'),
+    title: typeof overrides.title === 'string' && overrides.title.trim() ? overrides.title.trim() : preset?.defaultTitle ?? 'Preset Widget',
+    presetId,
+    x: sanitizeInteger(overrides.x, 0),
+    y: sanitizeInteger(overrides.y, 0),
+    w: sanitizeInteger(overrides.w, preset?.defaultWidth ?? 5),
+    h: sanitizeInteger(overrides.h, preset?.defaultHeight ?? 4),
   }
 
   return placeWidgetInLayout(widgets, base)
@@ -240,16 +287,25 @@ export function createDefaultHomeWorkspaceState(): HomeWorkspaceState {
   }
 }
 
-function sanitizeWidget(
-  value: unknown,
-  index: number,
-  widgets: HomeWorkspaceWidget[],
-): HomeWorkspaceWidget | null {
-  if (!value || typeof value !== 'object') {
+function presetFromLegacyModuleId(moduleId: string | null | undefined): HomeWorkspacePresetId | null {
+  const normalized = moduleId?.trim().toLowerCase()
+  if (!normalized) {
     return null
   }
 
-  const candidate = value as Partial<HomeWorkspaceWidget>
+  if (normalized === 'battery' || normalized === 'battery-watch') return 'battery-watch'
+  if (normalized === 'heading' || normalized === 'heading-gyro' || normalized === 'gyro') return 'heading-gyro'
+  if (normalized === 'systems' || normalized === 'systems-health') return 'systems-health'
+  if (normalized === 'commands') return 'commands'
+  if (normalized === 'alerts') return 'alerts'
+  return null
+}
+
+function sanitizeTopicWidget(
+  candidate: Partial<HomeWorkspaceTopicWidget>,
+  index: number,
+  widgets: HomeWorkspaceWidget[],
+): HomeWorkspaceTopicWidget {
   return createHomeWorkspaceWidget(widgets, {
     id: typeof candidate.id === 'string' && candidate.id ? candidate.id : createId('widget'),
     title:
@@ -266,16 +322,69 @@ function sanitizeWidget(
   })
 }
 
+function sanitizePresetWidget(
+  candidate: Partial<HomeWorkspacePresetWidget>,
+  index: number,
+  widgets: HomeWorkspaceWidget[],
+): HomeWorkspacePresetWidget | null {
+  if (!isHomeWorkspacePresetId(candidate.presetId)) {
+    return null
+  }
+
+  return createHomeWorkspacePresetWidget(widgets, candidate.presetId, {
+    id: typeof candidate.id === 'string' && candidate.id ? candidate.id : createId('widget'),
+    title:
+      typeof candidate.title === 'string' && candidate.title.trim().length
+        ? candidate.title.trim()
+        : getHomeWorkspacePresetDefinition(candidate.presetId)?.defaultTitle ?? `Preset ${index + 1}`,
+    x: sanitizeInteger(candidate.x, 0),
+    y: sanitizeInteger(candidate.y, 0),
+    w: sanitizeInteger(candidate.w, getHomeWorkspacePresetDefinition(candidate.presetId)?.defaultWidth ?? 5),
+    h: sanitizeInteger(candidate.h, getHomeWorkspacePresetDefinition(candidate.presetId)?.defaultHeight ?? 4),
+  })
+}
+
+function sanitizeWidget(
+  value: unknown,
+  index: number,
+  widgets: HomeWorkspaceWidget[],
+): HomeWorkspaceWidget | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const candidate = value as Partial<HomeWorkspaceWidget & { presetId?: HomeWorkspacePresetId }>
+
+  if (candidate.kind === 'preset' || isHomeWorkspacePresetId(candidate.presetId)) {
+    return sanitizePresetWidget(candidate as Partial<HomeWorkspacePresetWidget>, index, widgets)
+  }
+
+  return sanitizeTopicWidget(candidate as Partial<HomeWorkspaceTopicWidget>, index, widgets)
+}
+
 function migrateLegacySlots(slots: LegacyHomeWorkspaceSlot[]) {
   const widgets: HomeWorkspaceWidget[] = []
 
   slots.forEach((slot, index) => {
+    const presetId = presetFromLegacyModuleId(slot.moduleId)
+    if (presetId) {
+      const preset = getHomeWorkspacePresetDefinition(presetId)
+      widgets.push(
+        createHomeWorkspacePresetWidget(widgets, presetId, {
+          id: typeof slot.id === 'string' && slot.id ? slot.id : createId('widget'),
+          w: slot.size === 'wide' ? Math.max(6, preset?.defaultWidth ?? 6) : preset?.defaultWidth,
+          h: preset?.defaultHeight,
+        }),
+      )
+      return
+    }
+
     widgets.push(
       createHomeWorkspaceWidget(widgets, {
         id: typeof slot.id === 'string' && slot.id ? slot.id : createId('widget'),
         title: `Widget ${index + 1}`,
         w: slot.size === 'wide' ? 6 : 4,
-        h: slot.size === 'wide' ? 3 : 3,
+        h: 3,
       }),
     )
   })
@@ -330,7 +439,10 @@ function loadRawWorkspaceState(storageKey: string) {
 }
 
 export function loadHomeWorkspaceState(): HomeWorkspaceState {
-  const parsed = loadRawWorkspaceState(HOME_WORKSPACE_STORAGE_KEY) ?? loadRawWorkspaceState(HOME_WORKSPACE_LEGACY_STORAGE_KEY)
+  const parsed =
+    loadRawWorkspaceState(HOME_WORKSPACE_STORAGE_KEY) ??
+    loadRawWorkspaceState(HOME_WORKSPACE_V2_STORAGE_KEY) ??
+    loadRawWorkspaceState(HOME_WORKSPACE_LEGACY_STORAGE_KEY)
   if (!parsed) {
     return createDefaultHomeWorkspaceState()
   }

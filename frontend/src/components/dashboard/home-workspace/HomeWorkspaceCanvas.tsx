@@ -15,30 +15,47 @@ import {
   HOME_WORKSPACE_MAX_WIDGET_W,
   HOME_WORKSPACE_MIN_WIDGET_H,
   HOME_WORKSPACE_MIN_WIDGET_W,
+  type HomeWorkspaceWidgetConfig,
+  type HomeWorkspaceWidgetRenderer as HomeWorkspaceRendererId,
+  isHomeWorkspacePresetWidget,
+  isHomeWorkspaceTopicWidget,
   type HomeWorkspaceWidget,
 } from '../../../home-workspace/homeWorkspaceStore'
-import type { TelemetryTopic } from '../../../types/telemetry'
+import { getHomeWorkspacePresetDefinition } from '../../../home-workspace/homeWorkspacePresets'
+import type {
+  AlertItem,
+  BatteryHistoryPoint,
+  TelemetryDerivedState,
+  TelemetrySnapshot,
+  TelemetryTopic,
+} from '../../../types/telemetry'
 import {
   HomeWorkspaceWidgetRenderer,
   allowedWidgetRenderers,
   resolveWidgetDensity,
   suggestedWidgetTitle,
+  workspaceWidgetLabel,
   widgetRendererLabel,
   type WorkspaceHistoryPoint,
 } from './HomeWorkspaceWidgetRenderer'
+import { TelemetryTopicBrowser, type TelemetryTopicScopeFilter } from '../TelemetryTopicBrowser'
 
 interface HomeWorkspaceCanvasProps {
+  alerts: AlertItem[]
+  batteryHistory: BatteryHistoryPoint[]
+  derived: TelemetryDerivedState
   widgets: HomeWorkspaceWidget[]
   topics: TelemetryTopic[]
   historyByTopic: Record<string, WorkspaceHistoryPoint[]>
   editMode: boolean
+  snapshot: TelemetrySnapshot
   onUpdateWidget: (
     widgetId: string,
     patch: {
       title?: string
       topicKey?: string | null
-      renderer?: HomeWorkspaceWidget['renderer']
-      config?: Partial<HomeWorkspaceWidget['config']>
+      renderer?: HomeWorkspaceRendererId
+      config?: Partial<HomeWorkspaceWidgetConfig>
     },
   ) => void
   onRemoveWidget: (widgetId: string) => void
@@ -155,16 +172,24 @@ function WidgetConfigPanel({
   onUpdateWidget: HomeWorkspaceCanvasProps['onUpdateWidget']
   onResizeWidget: HomeWorkspaceCanvasProps['onResizeWidget']
 }) {
-  const rendererOptions = allowedWidgetRenderers(topic).map((renderer) => ({
-    id: renderer,
-    label: widgetRendererLabel(renderer),
-  }))
-  const listId = `workspace-topic-list-${widget.id}`
-  const topicKey = widget.topicKey ?? ''
-  const numericTopic = topic?.valueKind === 'number'
+  const [topicSearchQuery, setTopicSearchQuery] = useState('')
+  const [topicScopeFilter, setTopicScopeFilter] = useState<TelemetryTopicScopeFilter>('all')
   const title = widget.title
+  const preset = isHomeWorkspacePresetWidget(widget) ? getHomeWorkspacePresetDefinition(widget.presetId) : null
+  const rendererOptions = isHomeWorkspaceTopicWidget(widget)
+    ? allowedWidgetRenderers(topic).map((renderer) => ({
+        id: renderer,
+        label: widgetRendererLabel(renderer),
+      }))
+    : []
+  const topicKey = isHomeWorkspaceTopicWidget(widget) ? widget.topicKey ?? '' : ''
+  const numericTopic = isHomeWorkspaceTopicWidget(widget) && topic?.valueKind === 'number'
 
   const handleTopicChange = (value: string) => {
+    if (!isHomeWorkspaceTopicWidget(widget)) {
+      return
+    }
+
     const nextKey = value.trim() || null
     const nextTopic = nextKey ? topics.find((candidate) => candidate.key === nextKey) ?? null : null
     const nextTitle =
@@ -190,7 +215,11 @@ function WidgetConfigPanel({
     onResizeWidget(widget.id, widget.w, clampSize(parsed, HOME_WORKSPACE_MIN_WIDGET_H, HOME_WORKSPACE_MAX_WIDGET_H))
   }
 
-  const commitNumericConfig = (field: keyof HomeWorkspaceWidget['config'], rawValue: string) => {
+  const commitNumericConfig = (field: keyof HomeWorkspaceWidgetConfig, rawValue: string) => {
+    if (!isHomeWorkspaceTopicWidget(widget)) {
+      return
+    }
+
     if (rawValue.trim() === '') {
       onUpdateWidget(widget.id, { config: { [field]: null } })
       return
@@ -212,32 +241,59 @@ function WidgetConfigPanel({
           <PanelInput value={title} onChange={(value) => onUpdateWidget(widget.id, { title: value })} />
         </label>
 
-        <label className="grid gap-2">
-          <FieldLabel>Renderer</FieldLabel>
-          <PanelSelect
-            value={widget.renderer}
-            onChange={(value) => onUpdateWidget(widget.id, { renderer: value })}
-            options={rendererOptions}
-          />
-        </label>
+        {isHomeWorkspaceTopicWidget(widget) ? (
+          <label className="grid gap-2">
+            <FieldLabel>Renderer</FieldLabel>
+            <PanelSelect
+              value={widget.renderer}
+              onChange={(value) => onUpdateWidget(widget.id, { renderer: value })}
+              options={rendererOptions}
+            />
+          </label>
+        ) : (
+          <div className="grid gap-2">
+            <FieldLabel>Preset</FieldLabel>
+            <div className="rounded-[14px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2 text-[0.82rem] text-[var(--text)]">
+              {preset?.label ?? 'Preset widget'}
+            </div>
+          </div>
+        )}
       </div>
 
-      <label className="grid gap-2">
-        <FieldLabel>Topic / Data Source</FieldLabel>
-        <PanelInput
-          value={topicKey}
-          onChange={handleTopicChange}
-          list={listId}
-          placeholder="/robot/topic/path"
-        />
-        <datalist id={listId}>
-          {topics.map((entry) => (
-            <option key={entry.key} value={entry.key}>
-              {entry.label}
-            </option>
-          ))}
-        </datalist>
-      </label>
+      {isHomeWorkspaceTopicWidget(widget) ? (
+        <>
+          <label className="grid gap-2">
+            <FieldLabel>Topic / Data Source</FieldLabel>
+            <PanelInput
+              value={topicKey}
+              onChange={handleTopicChange}
+              placeholder="/robot/topic/path"
+            />
+          </label>
+
+          <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/74 px-3 py-3">
+            <TelemetryTopicBrowser
+              topics={topics}
+              searchQuery={topicSearchQuery}
+              onSearchQueryChange={setTopicSearchQuery}
+              scopeFilter={topicScopeFilter}
+              onScopeFilterChange={setTopicScopeFilter}
+              maxResults={18}
+              listClassName="max-h-[320px]"
+              emptyMessage="No live topics matched this filter."
+              getAction={(candidate) => ({
+                label: candidate.key === topicKey ? 'Selected' : 'Use topic',
+                disabled: candidate.key === topicKey,
+                onClick: () => handleTopicChange(candidate.key),
+              })}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-3 text-[0.78rem] leading-6 text-[var(--text-muted)]">
+          {preset?.description ?? 'Preset widgets reuse the live dashboard panel inside the overview whiteboard.'}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-4">
         <label className="grid gap-2">
@@ -264,41 +320,47 @@ function WidgetConfigPanel({
           />
         </label>
 
-        <label className="grid gap-2">
-          <FieldLabel>Decimals</FieldLabel>
-          <input
-            type="number"
-            min={0}
-            max={4}
-            defaultValue={widget.config.decimals}
-            onBlur={(event) =>
-              onUpdateWidget(widget.id, {
-                config: { decimals: clampSize(Number(event.target.value) || 0, 0, 4) },
-              })
-            }
-            className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)]/84 px-3 py-2 text-[0.8rem] text-[var(--text)] outline-none focus:border-[var(--primary)]"
-          />
-        </label>
+        {isHomeWorkspaceTopicWidget(widget) ? (
+          <>
+            <label className="grid gap-2">
+              <FieldLabel>Decimals</FieldLabel>
+              <input
+                type="number"
+                min={0}
+                max={4}
+                defaultValue={widget.config.decimals}
+                onBlur={(event) =>
+                  onUpdateWidget(widget.id, {
+                    config: { decimals: clampSize(Number(event.target.value) || 0, 0, 4) },
+                  })
+                }
+                className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)]/84 px-3 py-2 text-[0.8rem] text-[var(--text)] outline-none focus:border-[var(--primary)]"
+              />
+            </label>
 
-        <label className="grid gap-2">
-          <FieldLabel>Units</FieldLabel>
-          <PanelInput
-            value={widget.config.units}
-            onChange={(value) => onUpdateWidget(widget.id, { config: { units: value.slice(0, 16) } })}
-            placeholder="V, mm, %"
-          />
-        </label>
+            <label className="grid gap-2">
+              <FieldLabel>Units</FieldLabel>
+              <PanelInput
+                value={widget.config.units}
+                onChange={(value) => onUpdateWidget(widget.id, { config: { units: value.slice(0, 16) } })}
+                placeholder="V, mm, %"
+              />
+            </label>
+          </>
+        ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <ToolbarButton
-          active={widget.config.compact}
-          onClick={() => onUpdateWidget(widget.id, { config: { compact: !widget.config.compact } })}
-          title="Force a denser internal widget layout"
-        >
-          Compact Mode
-        </ToolbarButton>
-      </div>
+      {isHomeWorkspaceTopicWidget(widget) ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <ToolbarButton
+            active={widget.config.compact}
+            onClick={() => onUpdateWidget(widget.id, { config: { compact: !widget.config.compact } })}
+            title="Force a denser internal widget layout"
+          >
+            Compact Mode
+          </ToolbarButton>
+        </div>
+      ) : null}
 
       {numericTopic ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -345,10 +407,14 @@ function WidgetConfigPanel({
 }
 
 export function HomeWorkspaceCanvas({
+  alerts,
+  batteryHistory,
+  derived,
   widgets,
   topics,
   historyByTopic,
   editMode,
+  snapshot,
   onUpdateWidget,
   onRemoveWidget,
   onMoveWidget,
@@ -502,10 +568,11 @@ export function HomeWorkspaceCanvas({
                 w: widget.w,
                 h: widget.h,
               }
-        const topic = widget.topicKey ? topicMap.get(widget.topicKey) ?? null : null
-        const history = widget.topicKey ? historyByTopic[widget.topicKey] ?? [] : []
+        const topic = isHomeWorkspaceTopicWidget(widget) && widget.topicKey ? topicMap.get(widget.topicKey) ?? null : null
+        const history = isHomeWorkspaceTopicWidget(widget) && widget.topicKey ? historyByTopic[widget.topicKey] ?? [] : []
         const density = resolveWidgetDensity(widget)
         const settingsOpen = expandedWidgetId === widget.id
+        const preset = isHomeWorkspacePresetWidget(widget) ? getHomeWorkspacePresetDefinition(widget.presetId) : null
 
         return (
           <div
@@ -539,8 +606,9 @@ export function HomeWorkspaceCanvas({
                     {widget.title}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                    <span>{topic?.scope ?? 'unbound'}</span>
-                    <span>{widgetRendererLabel(widget.renderer)}</span>
+                    <span>{isHomeWorkspacePresetWidget(widget) ? 'preset' : topic?.scope ?? 'unbound'}</span>
+                    <span>{workspaceWidgetLabel(widget)}</span>
+                    {preset ? <span>{preset.id}</span> : null}
                     <span>{density}</span>
                     <span>
                       {widget.w}x{widget.h}
@@ -576,7 +644,15 @@ export function HomeWorkspaceCanvas({
 
               <div className="relative z-[1] flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3">
                 <div className="min-h-0 flex-1">
-                  <HomeWorkspaceWidgetRenderer widget={widget} topic={topic} history={history} />
+                  <HomeWorkspaceWidgetRenderer
+                    widget={widget}
+                    topic={topic}
+                    history={history}
+                    snapshot={snapshot}
+                    derived={derived}
+                    alerts={alerts}
+                    batteryHistory={batteryHistory}
+                  />
                 </div>
 
                 {settingsOpen ? (

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { HomeWorkspacePresetId } from './homeWorkspacePresets'
 import {
   HOME_WORKSPACE_MAX_PAGES,
   createHomeWorkspacePage,
+  createHomeWorkspacePresetWidget,
   createHomeWorkspaceWidget,
+  isHomeWorkspaceTopicWidget,
   loadHomeWorkspaceState,
   persistHomeWorkspaceState,
   placeWidgetInLayout,
@@ -13,10 +16,10 @@ import {
 } from './homeWorkspaceStore'
 
 interface HomeWorkspaceWidgetPatch {
+  config?: Partial<HomeWorkspaceWidgetConfig>
+  renderer?: HomeWorkspaceWidgetRenderer
   title?: string
   topicKey?: string | null
-  renderer?: HomeWorkspaceWidgetRenderer
-  config?: Partial<HomeWorkspaceWidgetConfig>
 }
 
 function nextPageTitle(state: HomeWorkspaceState) {
@@ -153,10 +156,18 @@ export function useHomeWorkspace() {
     )
   }
 
-  const addWidgetToActivePage = () => {
+  const addTopicWidgetToActivePage = () => {
     setWorkspace((current) =>
       commitState(current, (state) =>
         updateActivePageWidgets(state, (widgets) => [...widgets, createHomeWorkspaceWidget(widgets)]),
+      ),
+    )
+  }
+
+  const addPresetWidgetToActivePage = (presetId: HomeWorkspacePresetId) => {
+    setWorkspace((current) =>
+      commitState(current, (state) =>
+        updateActivePageWidgets(state, (widgets) => [...widgets, createHomeWorkspacePresetWidget(widgets, presetId)]),
       ),
     )
   }
@@ -173,34 +184,46 @@ export function useHomeWorkspace() {
     setWorkspace((current) =>
       commitState(current, (state) =>
         updateActivePageWidgets(state, (widgets) =>
-          widgets.map((widget) =>
-            widget.id === widgetId
-              ? {
-                  ...widget,
-                  title:
-                    typeof patch.title === 'string'
-                      ? patch.title.trim().slice(0, 48) || widget.title
-                      : widget.title,
-                  topicKey:
-                    patch.topicKey === null
-                      ? null
-                      : typeof patch.topicKey === 'string'
-                        ? patch.topicKey.trim() || null
-                        : widget.topicKey,
-                  renderer: patch.renderer ?? widget.renderer,
-                  config: patch.config
-                    ? {
-                        ...widget.config,
-                        ...patch.config,
-                        decimals:
-                          typeof patch.config.decimals === 'number'
-                            ? Math.max(0, Math.min(4, Math.round(patch.config.decimals)))
-                            : widget.config.decimals,
-                      }
-                    : widget.config,
-                }
-              : widget,
-          ),
+          widgets.map((widget) => {
+            if (widget.id !== widgetId) {
+              return widget
+            }
+
+            if (!isHomeWorkspaceTopicWidget(widget)) {
+              return {
+                ...widget,
+                title:
+                  typeof patch.title === 'string'
+                    ? patch.title.trim().slice(0, 48) || widget.title
+                    : widget.title,
+              }
+            }
+
+            return {
+              ...widget,
+              title:
+                typeof patch.title === 'string'
+                  ? patch.title.trim().slice(0, 48) || widget.title
+                  : widget.title,
+              topicKey:
+                patch.topicKey === null
+                  ? null
+                  : typeof patch.topicKey === 'string'
+                    ? patch.topicKey.trim() || null
+                    : widget.topicKey,
+              renderer: patch.renderer ?? widget.renderer,
+              config: patch.config
+                ? {
+                    ...widget.config,
+                    ...patch.config,
+                    decimals:
+                      typeof patch.config.decimals === 'number'
+                        ? Math.max(0, Math.min(4, Math.round(patch.config.decimals)))
+                        : widget.config.decimals,
+                  }
+                : widget.config,
+            }
+          }),
         ),
       ),
     )
@@ -266,7 +289,8 @@ export function useHomeWorkspace() {
     renamePage,
     addPage,
     removePage,
-    addWidgetToActivePage,
+    addTopicWidgetToActivePage,
+    addPresetWidgetToActivePage,
     removeWidget,
     updateWidget,
     moveWidget,

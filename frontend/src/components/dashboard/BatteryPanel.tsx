@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { useMemo } from 'react'
 import { formatCurrent, formatDurationMinutes, formatPercent, formatPower, formatVoltage } from '../../lib/format'
 import type { BatteryData, BatteryHistoryPoint, UiTone } from '../../types/telemetry'
@@ -9,14 +11,14 @@ interface BatteryPanelProps {
   history: BatteryHistoryPoint[]
 }
 
-function voltageTone(voltageV: number): UiTone {
+export function voltageTone(voltageV: number): UiTone {
   if (voltageV <= 0) return 'neutral'
   if (voltageV < 11.0) return 'critical'
   if (voltageV < 11.8) return 'warning'
   return 'good'
 }
 
-function stabilityTone(points: BatteryHistoryPoint[]): UiTone {
+export function stabilityTone(points: BatteryHistoryPoint[]): UiTone {
   if (points.length < 4) {
     return 'neutral'
   }
@@ -68,11 +70,6 @@ function sparklinePoints(points: BatteryHistoryPoint[], width: number, height: n
 }
 
 export function BatteryPanel({ battery, history }: BatteryPanelProps) {
-  const currentTone = voltageTone(battery.voltageV)
-  const graphTone = stabilityTone(history)
-  const sparkline = useMemo(() => sparklinePoints(history, 540, 150), [history])
-  const socPercent = Math.max(0, Math.min(100, battery.stateOfCharge * 100))
-
   return (
     <DashboardCard
       title="Battery Watch"
@@ -81,77 +78,87 @@ export function BatteryPanel({ battery, history }: BatteryPanelProps) {
       className="min-h-[0]"
       headerSlot={
         <div className="flex flex-wrap gap-2">
-          <StatusBadge tone={currentTone} label={battery.voltageV > 0 ? formatVoltage(battery.voltageV, 2) : 'no pack'} />
-          <StatusBadge tone={graphTone} label={toneLabel(graphTone)} />
+          <StatusBadge tone={voltageTone(battery.voltageV)} label={battery.voltageV > 0 ? formatVoltage(battery.voltageV, 2) : 'no pack'} />
+          <StatusBadge tone={stabilityTone(history)} label={toneLabel(stabilityTone(history))} />
         </div>
       }
     >
-      <div className="grid h-full gap-3">
-        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 p-3">
-          {history.length ? (
-            <svg viewBox="0 0 540 150" className="h-[160px] w-full">
-              {Array.from({ length: 6 }, (_, index) => {
-                const y = (index / 5) * 150
-                return <line key={index} x1="0" y1={y} x2="540" y2={y} stroke="var(--gridLine)" strokeWidth="1" />
-              })}
-              <polyline
-                fill="none"
-                stroke="var(--warning)"
-                strokeWidth="3"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                points={sparkline}
-              />
-            </svg>
-          ) : (
-            <div className="flex h-[160px] items-center justify-center rounded-[14px] border border-dashed border-[var(--border)] text-[0.84rem] text-[var(--text-muted)]">
-              Waiting for a live battery stream.
-            </div>
-          )}
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-[0.76rem] text-[var(--text-muted)]">
-            <div>Recent voltage trend</div>
-            <div>{history.length ? `${history.length} samples` : 'no samples yet'}</div>
-          </div>
-        </div>
+      <BatteryPanelBody battery={battery} history={history} />
+    </DashboardCard>
+  )
+}
 
-        <div className="grid gap-2 md:grid-cols-4">
-          {[
-            ['Voltage', battery.voltageV > 0 ? formatVoltage(battery.voltageV, 2) : '--', 'pack input now'],
-            ['Current', battery.currentA > 0 ? formatCurrent(battery.currentA, 1) : '--', 'instantaneous draw'],
-            ['Power', battery.powerW > 0 ? formatPower(battery.powerW, 0) : '--', 'electrical load'],
-            ['Est. runtime', formatDurationMinutes(battery.estimatedRuntimeMin), 'conservative estimate under minimum drivetrain load'],
-          ].map(([label, value, detail]) => (
-            <div key={label} className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
-              <div className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
-              <div className="mt-1.5 font-mono text-[0.94rem] text-[var(--text)]">{value}</div>
-              <div className="mt-1 text-[0.72rem] leading-5 text-[var(--text-muted)]">{detail}</div>
-            </div>
-          ))}
-        </div>
+export function BatteryPanelBody({ battery, history }: BatteryPanelProps) {
+  const currentTone = voltageTone(battery.voltageV)
+  const sparkline = useMemo(() => sparklinePoints(history, 540, 150), [history])
+  const socPercent = Math.max(0, Math.min(100, battery.stateOfCharge * 100))
 
-        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-              Estimated state of charge
-            </div>
-            <div className="font-mono text-[0.84rem] text-[var(--text)]">{formatPercent(battery.stateOfCharge, 0)}</div>
-          </div>
-          <div className="mt-2 h-3 overflow-hidden rounded-full bg-[var(--surface)]">
-            <div
-              className="h-full rounded-full transition-[width]"
-              style={{
-                width: `${socPercent}%`,
-                background:
-                  currentTone === 'critical'
-                    ? 'var(--danger)'
-                    : currentTone === 'warning'
-                      ? 'var(--warning)'
-                      : 'var(--success)',
-              }}
+  return (
+    <div className="grid h-full gap-3">
+      <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 p-3">
+        {history.length ? (
+          <svg viewBox="0 0 540 150" className="h-[160px] w-full">
+            {Array.from({ length: 6 }, (_, index) => {
+              const y = (index / 5) * 150
+              return <line key={index} x1="0" y1={y} x2="540" y2={y} stroke="var(--gridLine)" strokeWidth="1" />
+            })}
+            <polyline
+              fill="none"
+              stroke="var(--warning)"
+              strokeWidth="3"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              points={sparkline}
             />
+          </svg>
+        ) : (
+          <div className="flex h-[160px] items-center justify-center rounded-[14px] border border-dashed border-[var(--border)] text-[0.84rem] text-[var(--text-muted)]">
+            Waiting for a live battery stream.
           </div>
+        )}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-[0.76rem] text-[var(--text-muted)]">
+          <div>Recent voltage trend</div>
+          <div>{history.length ? `${history.length} samples` : 'no samples yet'}</div>
         </div>
       </div>
-    </DashboardCard>
+
+      <div className="grid gap-2 md:grid-cols-4">
+        {[
+          ['Voltage', battery.voltageV > 0 ? formatVoltage(battery.voltageV, 2) : '--', 'pack input now'],
+          ['Current', battery.currentA > 0 ? formatCurrent(battery.currentA, 1) : '--', 'instantaneous draw'],
+          ['Power', battery.powerW > 0 ? formatPower(battery.powerW, 0) : '--', 'electrical load'],
+          ['Est. runtime', formatDurationMinutes(battery.estimatedRuntimeMin), 'conservative estimate under minimum drivetrain load'],
+        ].map(([label, value, detail]) => (
+          <div key={label} className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-2.5">
+            <div className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
+            <div className="mt-1.5 font-mono text-[0.94rem] text-[var(--text)]">{value}</div>
+            <div className="mt-1 text-[0.72rem] leading-5 text-[var(--text-muted)]">{detail}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            Estimated state of charge
+          </div>
+          <div className="font-mono text-[0.84rem] text-[var(--text)]">{formatPercent(battery.stateOfCharge, 0)}</div>
+        </div>
+        <div className="mt-2 h-3 overflow-hidden rounded-full bg-[var(--surface)]">
+          <div
+            className="h-full rounded-full transition-[width]"
+            style={{
+              width: `${socPercent}%`,
+              background:
+                currentTone === 'critical'
+                  ? 'var(--danger)'
+                  : currentTone === 'warning'
+                    ? 'var(--warning)'
+                    : 'var(--success)',
+            }}
+          />
+        </div>
+      </div>
+    </div>
   )
 }

@@ -1,4 +1,13 @@
-import { startTransition, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  createElement,
+  startTransition,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react'
 import {
   getRemoteDriverStatus,
   sendRemoteDriverAction,
@@ -228,13 +237,16 @@ function createZeroPacket(gyroAssist: boolean) {
   }
 }
 
-export function useRemoteDriver(active: boolean) {
+function useRemoteDriverController() {
   const { mode } = useTelemetryMode()
   const [remoteDriver, setRemoteDriver] = useState<RemoteDriverStatus>(createFallbackRemoteDriver())
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(createFallbackBridgeStatus())
   const [gyroAssist, setGyroAssist] = useState(true)
   const [preview, setPreview] = useState<DriverPreview>(createIdlePreview())
   const [commandState, setCommandState] = useState<CommandState>(createDefaultMessage())
+  const [windowActive, setWindowActive] = useState(() =>
+    typeof document === 'undefined' ? true : !document.hidden && document.hasFocus(),
+  )
   const keyboardStateRef = useRef<KeyboardState>(createEmptyKeyboardState())
   const preferredGamepadIndexRef = useRef<number | null>(null)
   const gyroAssistRef = useRef(gyroAssist)
@@ -295,7 +307,7 @@ export function useRemoteDriver(active: boolean) {
         if (response.bridgeStatus) {
           setBridgeStatus(response.bridgeStatus)
         }
-        if (response.remoteDriver.mode !== 'teleop' || !active) {
+        if (response.remoteDriver.mode !== 'teleop' || !windowActive) {
           setGyroAssist(response.remoteDriver.gyroAssist)
         }
       } catch {
@@ -325,13 +337,9 @@ export function useRemoteDriver(active: boolean) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [active, mode])
+  }, [mode, windowActive])
 
   useEffect(() => {
-    if (!active) {
-      return
-    }
-
     const handleKeyChange = (event: KeyboardEvent, pressed: boolean) => {
       if (matchesEditableTarget(event.target)) {
         return
@@ -373,11 +381,20 @@ export function useRemoteDriver(active: boolean) {
       }
     }
 
+    const updateWindowActivity = () => {
+      setWindowActive(!document.hidden && document.hasFocus())
+    }
+
     const handleBlur = () => {
+      setWindowActive(false)
       void flushZeroPacket({
         tone: 'warning',
         message: 'Teleop heartbeat paused because the Hotloop window lost focus.',
       })
+    }
+
+    const handleFocus = () => {
+      updateWindowActivity()
     }
 
     const handleGamepadChange = () => {
@@ -388,7 +405,10 @@ export function useRemoteDriver(active: boolean) {
     const handleVisibility = () => {
       if (document.hidden) {
         handleBlur()
+        return
       }
+
+      updateWindowActivity()
     }
 
     const keyDown = (event: KeyboardEvent) => handleKeyChange(event, true)
@@ -396,6 +416,7 @@ export function useRemoteDriver(active: boolean) {
 
     window.addEventListener('keydown', keyDown)
     window.addEventListener('keyup', keyUp)
+    window.addEventListener('focus', handleFocus)
     window.addEventListener('blur', handleBlur)
     window.addEventListener('gamepadconnected', handleGamepadChange)
     window.addEventListener('gamepaddisconnected', handleGamepadChange)
@@ -404,18 +425,15 @@ export function useRemoteDriver(active: boolean) {
     return () => {
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('keyup', keyUp)
+      window.removeEventListener('focus', handleFocus)
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('gamepadconnected', handleGamepadChange)
       window.removeEventListener('gamepaddisconnected', handleGamepadChange)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [active, mode, remoteDriver.mode])
+  }, [mode, remoteDriver.mode])
 
   useEffect(() => {
-    if (!active) {
-      return
-    }
-
     let cancelled = false
 
     const tick = async () => {
@@ -431,7 +449,7 @@ export function useRemoteDriver(active: boolean) {
         setPreview(inputSample)
       })
 
-      if (remoteDriver.mode !== 'teleop') {
+      if (!windowActive || remoteDriver.mode !== 'teleop') {
         return
       }
 
@@ -475,35 +493,34 @@ export function useRemoteDriver(active: boolean) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [active, mode, remoteDriver.mode])
+  }, [mode, remoteDriver.mode, windowActive])
 
   useEffect(() => {
-    if (active && remoteDriver.mode === 'teleop') {
-      setCommandState({
-        tone: 'good',
-        message: 'Teleop session active. Keyboard and joystick input are being streamed automatically.',
-      })
+    if (remoteDriver.mode === 'teleop') {
+      setCommandState(
+        windowActive
+          ? {
+              tone: 'good',
+              message: 'Teleop session active. Keyboard and joystick input are being streamed automatically.',
+            }
+          : {
+              tone: 'warning',
+              message: 'Teleop heartbeat paused because the Hotloop window lost focus.',
+            },
+      )
       return
     }
 
-    if (active && remoteDriver.mode === 'autonomous') {
-      void flushZeroPacket({
+    if (remoteDriver.mode === 'autonomous') {
+      setCommandState({
         tone: 'info',
         message: 'Autonomous session active. Disable before changing mode or automode.',
       })
       return
     }
 
-    if (!active) {
-      void flushZeroPacket({
-        tone: 'neutral',
-        message: 'Return to the Overview control rail to send teleop heartbeat packets.',
-      })
-      return
-    }
-
     void flushZeroPacket(createDefaultMessage())
-  }, [active, remoteDriver.mode])
+  }, [remoteDriver.mode, windowActive])
 
   const dispatchAction = async (
     action: RemoteDriverAction,
@@ -571,6 +588,24 @@ export function useRemoteDriver(active: boolean) {
     preview,
     commandState,
     dispatchAction,
-    teleopStreaming: active && remoteDriver.mode === 'teleop',
+    teleopStreaming: windowActive && remoteDriver.mode === 'teleop',
   }
+}
+
+type RemoteDriverControllerValue = ReturnType<typeof useRemoteDriverController>
+
+const RemoteDriverContext = createContext<RemoteDriverControllerValue | null>(null)
+
+export function RemoteDriverProvider({ children }: PropsWithChildren) {
+  const value = useRemoteDriverController()
+  return createElement(RemoteDriverContext.Provider, { value }, children)
+}
+
+export function useRemoteDriver() {
+  const value = useContext(RemoteDriverContext)
+  if (!value) {
+    throw new Error('useRemoteDriver must be used within a RemoteDriverProvider.')
+  }
+
+  return value
 }

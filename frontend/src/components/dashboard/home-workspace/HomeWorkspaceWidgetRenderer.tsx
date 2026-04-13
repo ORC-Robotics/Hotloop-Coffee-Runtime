@@ -2,8 +2,26 @@
 
 import { cn } from '../../../lib/cn'
 import { clamp } from '../../../lib/format'
-import type { HomeWorkspaceWidget, HomeWorkspaceWidgetRenderer as WidgetRendererId } from '../../../home-workspace/homeWorkspaceStore'
-import type { TelemetryTopic } from '../../../types/telemetry'
+import { getHomeWorkspacePresetDefinition } from '../../../home-workspace/homeWorkspacePresets'
+import {
+  isHomeWorkspacePresetWidget,
+  isHomeWorkspaceTopicWidget,
+  type HomeWorkspaceTopicWidget,
+  type HomeWorkspaceWidget,
+  type HomeWorkspaceWidgetRenderer as WidgetRendererId,
+} from '../../../home-workspace/homeWorkspaceStore'
+import type {
+  AlertItem,
+  BatteryHistoryPoint,
+  TelemetryDerivedState,
+  TelemetrySnapshot,
+  TelemetryTopic,
+} from '../../../types/telemetry'
+import { AlertsPanelBody } from '../AlertsPanel'
+import { BatteryPanelBody } from '../BatteryPanel'
+import { CommandsPanelBody } from '../CommandsPanel'
+import { HeadingPanelBody } from '../HeadingPanel'
+import { SystemsHealthPanelBody } from '../SystemsHealthPanel'
 
 export type WorkspaceHistoryPoint = {
   timestamp: string
@@ -69,7 +87,7 @@ function toneAccent(tone: WorkspaceWidgetTone) {
   }
 }
 
-function evaluateNumericTone(value: number | null, widget: HomeWorkspaceWidget): WorkspaceWidgetTone {
+function evaluateNumericTone(value: number | null, widget: HomeWorkspaceTopicWidget): WorkspaceWidgetTone {
   if (value === null) {
     return 'neutral'
   }
@@ -103,8 +121,8 @@ function densityFromWidget(widget: HomeWorkspaceWidget): WorkspaceWidgetDensity 
     density = 'large'
   }
 
-  if (widget.config.compact && density === 'large') return 'medium'
-  if (widget.config.compact && density === 'medium') return 'compact'
+  if (isHomeWorkspaceTopicWidget(widget) && widget.config.compact && density === 'large') return 'medium'
+  if (isHomeWorkspaceTopicWidget(widget) && widget.config.compact && density === 'medium') return 'compact'
   return density
 }
 
@@ -162,7 +180,15 @@ export function widgetRendererLabel(renderer: WidgetRendererId) {
   return 'Auto'
 }
 
-function resolveRenderer(widget: HomeWorkspaceWidget, topic: TelemetryTopic | null, density: WorkspaceWidgetDensity) {
+export function workspaceWidgetLabel(widget: HomeWorkspaceWidget) {
+  if (isHomeWorkspacePresetWidget(widget)) {
+    return getHomeWorkspacePresetDefinition(widget.presetId)?.label ?? 'Preset'
+  }
+
+  return widgetRendererLabel(widget.renderer)
+}
+
+function resolveRenderer(widget: HomeWorkspaceTopicWidget, topic: TelemetryTopic | null, density: WorkspaceWidgetDensity) {
   const kind = getTopicKind(topic)
   const allowed = allowedWidgetRenderers(topic)
 
@@ -245,7 +271,7 @@ function NumberView({
   topic,
 }: {
   value: number | null
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspaceTopicWidget
   density: WorkspaceWidgetDensity
   topic: TelemetryTopic | null
 }) {
@@ -284,7 +310,7 @@ function StatView({
   topic,
 }: {
   value: number | null
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspaceTopicWidget
   density: WorkspaceWidgetDensity
   topic: TelemetryTopic | null
 }) {
@@ -322,7 +348,7 @@ function GaugeView({
   widget,
 }: {
   value: number | null
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspaceTopicWidget
 }) {
   const tone = evaluateNumericTone(value, widget)
   const accent = toneAccent(tone)
@@ -365,7 +391,7 @@ function BarView({
   widget,
 }: {
   value: number | null
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspaceTopicWidget
 }) {
   const tone = evaluateNumericTone(value, widget)
   const accent = toneAccent(tone)
@@ -406,7 +432,7 @@ function SparklineView({
   history,
 }: {
   value: number | null
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspaceTopicWidget
   history: WorkspaceHistoryPoint[]
 }) {
   const tone = evaluateNumericTone(value, widget)
@@ -546,15 +572,80 @@ function TextTileView({
   )
 }
 
+function PresetWorkspaceWidgetRenderer({
+  widget,
+  snapshot,
+  derived,
+  alerts,
+  batteryHistory,
+}: {
+  widget: HomeWorkspaceWidget
+  snapshot: TelemetrySnapshot
+  derived: TelemetryDerivedState
+  alerts: AlertItem[]
+  batteryHistory: BatteryHistoryPoint[]
+}) {
+  if (!isHomeWorkspacePresetWidget(widget)) {
+    return null
+  }
+
+  if (widget.presetId === 'battery-watch') {
+    return <BatteryPanelBody battery={snapshot.battery} history={batteryHistory} />
+  }
+
+  if (widget.presetId === 'heading-gyro') {
+    return <HeadingPanelBody data={snapshot.heading} />
+  }
+
+  if (widget.presetId === 'systems-health') {
+    return <SystemsHealthPanelBody data={snapshot.systems} />
+  }
+
+  if (widget.presetId === 'commands') {
+    return <CommandsPanelBody data={snapshot.commands} derived={derived} />
+  }
+
+  if (widget.presetId === 'alerts') {
+    return <AlertsPanelBody alerts={alerts} />
+  }
+
+  return (
+    <WidgetEmptyState
+      title="Preset unavailable"
+      subtitle="This preset is not registered in the current workspace runtime."
+    />
+  )
+}
+
 export function HomeWorkspaceWidgetRenderer({
   widget,
   topic,
   history,
+  snapshot,
+  derived,
+  alerts,
+  batteryHistory,
 }: {
   widget: HomeWorkspaceWidget
   topic: TelemetryTopic | null
   history: WorkspaceHistoryPoint[]
+  snapshot: TelemetrySnapshot
+  derived: TelemetryDerivedState
+  alerts: AlertItem[]
+  batteryHistory: BatteryHistoryPoint[]
 }) {
+  if (isHomeWorkspacePresetWidget(widget)) {
+    return (
+      <PresetWorkspaceWidgetRenderer
+        widget={widget}
+        snapshot={snapshot}
+        derived={derived}
+        alerts={alerts}
+        batteryHistory={batteryHistory}
+      />
+    )
+  }
+
   const density = resolveWidgetDensity(widget)
 
   if (widget.topicKey === null) {

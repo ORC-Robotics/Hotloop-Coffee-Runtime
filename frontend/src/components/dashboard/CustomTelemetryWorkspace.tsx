@@ -1,18 +1,24 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import { writeTelemetryTopicValue } from '../../data/telemetryGateway'
 import { useTelemetryCatalog } from '../../hooks/useTelemetryCatalog'
 import { cn } from '../../lib/cn'
 import { clamp, formatClock } from '../../lib/format'
-import type { TelemetryTopic, TelemetryTopicScope, TopicWriteCommand } from '../../types/telemetry'
+import type { TelemetryTopic, TopicWriteCommand } from '../../types/telemetry'
 import { DashboardCard } from './DashboardCard'
 import { StatusBadge } from './StatusBadge'
+import {
+  TelemetryTopicBrowser,
+  scopeChipClass,
+  scopeLabel,
+  type TelemetryTopicScopeFilter,
+} from './TelemetryTopicBrowser'
 
 const STORAGE_KEY = 'orion.custom-telemetry-board.v2'
 const LEGACY_STORAGE_KEY = 'orion.custom-telemetry-board.v1'
 const RESULT_LIMIT = 80
 const HISTORY_LIMIT = 96
 
-type ScopeFilter = 'all' | TelemetryTopicScope
+type ScopeFilter = TelemetryTopicScopeFilter
 type WritableKind = TopicWriteCommand['payload']['valueKind']
 type WidgetDisplayMode = 'auto' | 'text' | 'boolean' | 'gauge' | 'bar' | 'graph'
 type ResolvedWidgetDisplayMode = Exclude<WidgetDisplayMode, 'auto'>
@@ -190,34 +196,6 @@ function loadPinnedWidgets(): PinnedTopicWidget[] {
   return loadLegacyPinnedWidgets()
 }
 
-function scopeLabel(scope: TelemetryTopicScope) {
-  if (scope === 'telemetry') return 'Telemetry'
-  if (scope === 'debug') return 'Debug'
-  if (scope === 'config') return 'Config'
-  if (scope === 'auto-mode') return 'Auto Mode'
-  return 'Other'
-}
-
-function scopeChipClass(scope: TelemetryTopicScope) {
-  if (scope === 'telemetry') {
-    return 'border-[var(--primary)]/28 bg-[var(--primary-soft)]/72 text-[var(--text)]'
-  }
-
-  if (scope === 'debug') {
-    return 'border-[var(--warning)]/28 bg-[color-mix(in_srgb,var(--warning)_14%,transparent)] text-[var(--text)]'
-  }
-
-  if (scope === 'config') {
-    return 'border-[var(--info)]/28 bg-[color-mix(in_srgb,var(--info)_14%,transparent)] text-[var(--text)]'
-  }
-
-  if (scope === 'auto-mode') {
-    return 'border-[var(--accent)]/28 bg-[var(--accent-soft)]/72 text-[var(--text)]'
-  }
-
-  return 'border-[var(--success)]/28 bg-[color-mix(in_srgb,var(--success)_14%,transparent)] text-[var(--text)]'
-}
-
 function summaryToneClass(tone: 'good' | 'warning' | 'info' | 'neutral') {
   if (tone === 'good') {
     return 'border-[var(--success)]/24 bg-[color-mix(in_srgb,var(--success)_10%,var(--surface)_90%)]'
@@ -232,15 +210,6 @@ function summaryToneClass(tone: 'good' | 'warning' | 'info' | 'neutral') {
   }
 
   return 'border-[var(--border)] bg-[var(--surface)]/84'
-}
-
-function isSearchMatch(topic: TelemetryTopic, query: string) {
-  if (!query) {
-    return true
-  }
-
-  const searchable = `${topic.key} ${topic.label} ${topic.groupPath} ${topic.valueText}`.toLowerCase()
-  return searchable.includes(query)
 }
 
 function getWritableKind(topic: TelemetryTopic | null): WritableKind | null {
@@ -612,69 +581,6 @@ function SummaryTile({
       <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</div>
       <div className="mt-2 text-[1.35rem] font-semibold tracking-[-0.04em] text-[var(--text)]">{value}</div>
       <div className="mt-1 text-[0.8rem] leading-6 text-[var(--text-muted)]">{detail}</div>
-    </div>
-  )
-}
-
-function CatalogTopicRow({
-  topic,
-  pinned,
-  onAdd,
-}: {
-  topic: TelemetryTopic
-  pinned: boolean
-  onAdd: (topic: TelemetryTopic) => void
-}) {
-  return (
-    <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/82 px-3 py-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-[0.86rem] font-semibold tracking-[-0.02em] text-[var(--text)]">{topic.label}</div>
-            <div
-              className={cn(
-                'rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.14em]',
-                scopeChipClass(topic.scope),
-              )}
-            >
-              {scopeLabel(topic.scope)}
-            </div>
-            {topic.persistent ? (
-              <div className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                persistent
-              </div>
-            ) : null}
-            {topic.isWritable ? <StatusBadge tone="info" label="editable" /> : null}
-          </div>
-
-          <div className="mt-1 break-all font-mono text-[0.72rem] leading-6 text-[var(--text-muted)]">
-            {topic.key}
-          </div>
-
-          <div className="mt-2 text-[0.76rem] leading-6 text-[var(--text-muted)]">
-            Group {topic.groupPath || 'root'} / {topic.valueKind}
-          </div>
-        </div>
-
-        <div className="flex flex-col items-start gap-2 lg:items-end">
-          <div className="max-w-[280px] break-all font-mono text-[0.84rem] leading-6 text-[var(--text)] lg:text-right">
-            {topic.valueText}
-          </div>
-          <button
-            type="button"
-            onClick={() => onAdd(topic)}
-            disabled={pinned}
-            className={cn(
-              'rounded-full border px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.14em] transition-colors',
-              pinned
-                ? 'cursor-default border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
-                : 'border-[var(--accent)]/28 bg-[var(--accent-soft)]/78 text-[var(--text)] hover:bg-[var(--accent-soft)]',
-            )}
-          >
-            {pinned ? 'Pinned' : 'Add to board'}
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
@@ -1443,7 +1349,6 @@ export function CustomTelemetryWorkspace() {
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [pinnedWidgets, setPinnedWidgets] = useState<PinnedTopicWidget[]>(() => loadPinnedWidgets())
   const pinnedWidgetsRef = useRef(pinnedWidgets)
-  const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase())
 
   const catalog = useTelemetryCatalog((incoming) => {
     setHistoryByTopic((current) => {
@@ -1496,18 +1401,6 @@ export function CustomTelemetryWorkspace() {
 
   const pinnedKeySet = useMemo(() => new Set(pinnedWidgets.map((widget) => widget.key)), [pinnedWidgets])
   const editableCount = useMemo(() => catalog.topics.filter((topic) => topic.isWritable).length, [catalog.topics])
-
-  const filteredTopics = useMemo(() => {
-    return catalog.topics.filter((topic) => {
-      if (scopeFilter !== 'all' && topic.scope !== scopeFilter) {
-        return false
-      }
-
-      return isSearchMatch(topic, deferredQuery)
-    })
-  }, [catalog.topics, deferredQuery, scopeFilter])
-
-  const visibleTopics = filteredTopics.slice(0, RESULT_LIMIT)
 
   const pinnedTopics = useMemo(() => {
     return pinnedWidgets.map((widget) => ({
@@ -1606,78 +1499,32 @@ export function CustomTelemetryWorkspace() {
       <div className="grid gap-3 xl:grid-cols-[minmax(340px,0.96fr)_minmax(0,1.34fr)]">
         <DashboardCard title="Telemetry Catalog" subtitle="discover topics exposed by the current robot" accent="info">
           <div className="grid h-full min-h-0 gap-3">
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                Search by key, group or value
-              </span>
-              <input
-                value={searchQuery}
-                onChange={(event) => {
-                  const nextValue = event.target.value
-                  startTransition(() => {
-                    setSearchQuery(nextValue)
-                  })
-                }}
-                placeholder="Config/Reactive/Turn Gain"
-                className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 px-4 py-3 text-[0.92rem] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-muted)] focus:border-[var(--primary)]"
-              />
-            </label>
-
-            <div className="flex flex-wrap gap-2">
-              {(['all', 'telemetry', 'debug', 'config', 'auto-mode', 'other'] as ScopeFilter[]).map((scope) => {
-                const active = scope === scopeFilter
-                const label = scope === 'all' ? 'All scopes' : scopeLabel(scope)
-                const count = scope === 'all' ? catalog.stats.totalTopics : catalog.stats.scopeCounts[scope]
-
-                return (
-                  <button
-                    key={scope}
-                    type="button"
-                    onClick={() => setScopeFilter(scope)}
-                    className={cn(
-                      'rounded-full border px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.14em] transition-colors',
-                      active
-                        ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--text)]'
-                        : 'border-[var(--border)] bg-[var(--surface-alt)]/78 text-[var(--text-muted)] hover:bg-[var(--surface-alt)]',
-                    )}
-                  >
-                    {label} / {count}
-                  </button>
-                )
-              })}
-            </div>
-
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-3 text-[0.82rem] leading-6 text-[var(--text-muted)]">
               Pin any topic to the board, then decide how it should look. ORION now lets each card behave like a text readout, boolean lamp, trend graph, progress bar or gauge with a custom measurement window, threshold logic and alert coloring.
             </div>
 
-            <div className="flex items-center justify-between gap-3 text-[0.76rem] text-[var(--text-muted)]">
-              <div>Showing {visibleTopics.length} of {filteredTopics.length} matching topics</div>
+            <div className="flex items-center justify-end gap-3 text-[0.76rem] text-[var(--text-muted)]">
               <div className="font-mono">{catalog.stats.online ? 'live feed' : 'cached feed'}</div>
             </div>
 
-            <div className="min-h-0 space-y-2 overflow-auto pr-1">
-              {visibleTopics.length ? (
-                visibleTopics.map((topic) => (
-                  <CatalogTopicRow
-                    key={topic.key}
-                    topic={topic}
-                    pinned={pinnedKeySet.has(topic.key)}
-                    onAdd={addPinnedTopic}
-                  />
-                ))
-              ) : (
-                <div className="rounded-[20px] border border-dashed border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-6 text-[0.84rem] leading-6 text-[var(--text-muted)]">
-                  No topics matched the current filter. Try another scope or a broader search term.
-                </div>
-              )}
-            </div>
-
-            {filteredTopics.length > visibleTopics.length ? (
-              <div className="text-[0.74rem] leading-6 text-[var(--text-muted)]">
-                Narrow the search to inspect more than the first {RESULT_LIMIT} matches.
-              </div>
-            ) : null}
+            <TelemetryTopicBrowser
+              topics={catalog.topics}
+              searchQuery={searchQuery}
+              onSearchQueryChange={(nextValue) => {
+                startTransition(() => {
+                  setSearchQuery(nextValue)
+                })
+              }}
+              scopeFilter={scopeFilter}
+              onScopeFilterChange={setScopeFilter}
+              maxResults={RESULT_LIMIT}
+              emptyMessage="No topics matched the current filter. Try another scope or a broader search term."
+              getAction={(topic) => ({
+                label: pinnedKeySet.has(topic.key) ? 'Pinned' : 'Add to board',
+                disabled: pinnedKeySet.has(topic.key),
+                onClick: () => addPinnedTopic(topic),
+              })}
+            />
           </div>
         </DashboardCard>
 

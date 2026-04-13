@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '../../lib/cn'
 import { formatClock } from '../../lib/format'
+import { HOME_WORKSPACE_PRESET_DEFINITIONS } from '../../home-workspace/homeWorkspacePresets'
+import { isHomeWorkspaceTopicWidget } from '../../home-workspace/homeWorkspaceStore'
 import { useTelemetryCatalog } from '../../hooks/useTelemetryCatalog'
 import { useHomeWorkspace } from '../../home-workspace/useHomeWorkspace'
-import type { TelemetryTopic } from '../../types/telemetry'
+import type {
+  AlertItem,
+  BatteryHistoryPoint,
+  TelemetryDerivedState,
+  TelemetrySnapshot,
+  TelemetryTopic,
+} from '../../types/telemetry'
 import { HomeWorkspaceCanvas } from './home-workspace/HomeWorkspaceCanvas'
 import type { WorkspaceHistoryPoint } from './home-workspace/HomeWorkspaceWidgetRenderer'
 
@@ -72,7 +80,19 @@ function WorkspacePageTab({
   )
 }
 
-export function HomeWorkspaceShell() {
+interface HomeWorkspaceShellProps {
+  alerts: AlertItem[]
+  batteryHistory: BatteryHistoryPoint[]
+  derived: TelemetryDerivedState
+  snapshot: TelemetrySnapshot
+}
+
+export function HomeWorkspaceShell({
+  alerts,
+  batteryHistory,
+  derived,
+  snapshot,
+}: HomeWorkspaceShellProps) {
   const {
     workspace,
     activePage,
@@ -81,7 +101,8 @@ export function HomeWorkspaceShell() {
     renamePage,
     addPage,
     removePage,
-    addWidgetToActivePage,
+    addTopicWidgetToActivePage,
+    addPresetWidgetToActivePage,
     removeWidget,
     updateWidget,
     moveWidget,
@@ -89,12 +110,13 @@ export function HomeWorkspaceShell() {
     clearActivePage,
   } = useHomeWorkspace()
   const [editMode, setEditMode] = useState(true)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [historyByTopic, setHistoryByTopic] = useState<Record<string, WorkspaceHistoryPoint[]>>({})
   const widgetTopicKeysRef = useRef<string[]>([])
 
   useEffect(() => {
     widgetTopicKeysRef.current = workspace.pages.flatMap((page) =>
-      page.widgets.flatMap((widget) => (widget.topicKey ? [widget.topicKey] : [])),
+      page.widgets.flatMap((widget) => (isHomeWorkspaceTopicWidget(widget) && widget.topicKey ? [widget.topicKey] : [])),
     )
   }, [workspace.pages])
 
@@ -169,7 +191,10 @@ export function HomeWorkspaceShell() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <WorkspaceActionButton onClick={addWidgetToActivePage}>Add widget</WorkspaceActionButton>
+          <WorkspaceActionButton onClick={addTopicWidgetToActivePage}>Add topic widget</WorkspaceActionButton>
+          <WorkspaceActionButton onClick={() => setLibraryOpen((current) => !current)} active={libraryOpen}>
+            {libraryOpen ? 'Hide presets' : 'Preset library'}
+          </WorkspaceActionButton>
           <WorkspaceActionButton onClick={() => setEditMode((current) => !current)} active={editMode}>
             {editMode ? 'Builder On' : 'Builder Off'}
           </WorkspaceActionButton>
@@ -179,6 +204,29 @@ export function HomeWorkspaceShell() {
           </WorkspaceActionButton>
         </div>
       </div>
+
+      {libraryOpen ? (
+        <div className="relative z-[1] grid gap-3 border-b border-[var(--border)]/65 px-4 py-3 xl:grid-cols-5 xl:px-5">
+          {HOME_WORKSPACE_PRESET_DEFINITIONS.map((preset) => (
+            <div
+              key={preset.id}
+              className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/78 px-3 py-3"
+            >
+              <div className="text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                Preset
+              </div>
+              <div className="mt-2 text-[0.92rem] font-semibold tracking-[-0.03em] text-[var(--text)]">{preset.label}</div>
+              <div className="mt-2 text-[0.76rem] leading-6 text-[var(--text-muted)]">{preset.description}</div>
+              <div className="mt-3 flex items-center justify-between gap-3 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                <span>
+                  {preset.defaultWidth}x{preset.defaultHeight}
+                </span>
+                <WorkspaceActionButton onClick={() => addPresetWidgetToActivePage(preset.id)}>Add</WorkspaceActionButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="relative z-[1] flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)]/65 px-4 py-2 xl:px-5">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
@@ -214,10 +262,14 @@ export function HomeWorkspaceShell() {
       <div className="relative z-[1] flex-1 min-h-0 p-4 xl:p-5">
         {activePage.widgets.length ? (
           <HomeWorkspaceCanvas
+            alerts={alerts}
+            batteryHistory={batteryHistory}
+            derived={derived}
             widgets={activePage.widgets}
             topics={catalog.topics}
             historyByTopic={historyByTopic}
             editMode={editMode}
+            snapshot={snapshot}
             onUpdateWidget={updateWidget}
             onRemoveWidget={removeWidget}
             onMoveWidget={moveWidget}
@@ -232,10 +284,11 @@ export function HomeWorkspaceShell() {
               This page is ready for custom widgets
             </div>
             <div className="mt-3 max-w-[56ch] text-[0.88rem] leading-7 text-[var(--text-muted)]">
-              Start with an empty widget, bind it to a live topic, then choose the renderer that best fits the data type. Each widget keeps its own layout, size, thresholds and formatting rules without pushing legacy panels back onto the home screen.
+              Start with a topic widget or a preset panel, then shape the page around what you want to monitor. Topic widgets stay fully customizable, and presets let you drop complete live panels like Battery Watch or Heading / Gyro straight into the overview board.
             </div>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              <WorkspaceActionButton onClick={addWidgetToActivePage}>Add first widget</WorkspaceActionButton>
+              <WorkspaceActionButton onClick={addTopicWidgetToActivePage}>Add first topic widget</WorkspaceActionButton>
+              <WorkspaceActionButton onClick={() => addPresetWidgetToActivePage('battery-watch')}>Add Battery preset</WorkspaceActionButton>
               <WorkspaceActionButton onClick={addPage} disabled={!canAddPage}>Create another page</WorkspaceActionButton>
             </div>
           </div>
