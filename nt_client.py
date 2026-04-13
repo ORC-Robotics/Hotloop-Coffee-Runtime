@@ -328,6 +328,61 @@ class NTClient:
         except Exception:
             return None
 
+    def get_table(self, path: str):
+        segments = [segment for segment in path.split("/") if segment]
+        if not segments:
+            return None
+
+        try:
+            table = self.inst.getTable(segments[0])
+        except Exception:
+            return None
+
+        for segment in segments[1:]:
+            try:
+                table = table.getSubTable(segment)
+            except Exception:
+                return None
+
+        return table
+
+    def get_table_subtables(self, path: str) -> list[str]:
+        table = self.get_table(path)
+        if table is None:
+            return []
+
+        try:
+            return sorted(str(name) for name in table.getSubTables())
+        except Exception:
+            return []
+
+    def get_table_string(self, path: str, key: str, default: str = "") -> str:
+        table = self.get_table(path)
+        if table is None:
+            return default
+        try:
+            return table.getString(key, default)
+        except Exception:
+            return default
+
+    def get_table_string_array(self, path: str, key: str, default: list[str] | None = None) -> list[str]:
+        table = self.get_table(path)
+        if table is None:
+            return default or []
+        try:
+            return list(table.getStringArray(key, default or []))
+        except Exception:
+            return default or []
+
+    def get_table_bool(self, path: str, key: str, default: bool = False) -> bool:
+        table = self.get_table(path)
+        if table is None:
+            return default
+        try:
+            return bool(table.getBoolean(key, default))
+        except Exception:
+            return default
+
     def get_subtable_string(self, path: str, key: str, default: str = "") -> str:
         table = self.get_subtable(path)
         if table is None:

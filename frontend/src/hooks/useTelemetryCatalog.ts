@@ -34,6 +34,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     topicCatalogEndpoint: '/api/topics',
     topicWriteEndpoint: '/api/topics/write',
     connected: false,
+    discoveredCameraFeeds: [],
     message: 'Waiting for the telemetry bridge.',
   }
 }

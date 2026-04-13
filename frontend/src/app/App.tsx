@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { resolveActiveCameraFeeds } from '../lib/cameraFeeds'
 import { AlertsPanel } from '../components/dashboard/AlertsPanel'
 import { BatteryPanel } from '../components/dashboard/BatteryPanel'
 import { CameraViewportPanel } from '../components/dashboard/CameraViewportPanel'
@@ -60,12 +61,17 @@ export default function App() {
   const { snapshot, alerts, derived, batteryHistory } = useTelemetry()
   const { controlMode, bridgeStatus, selectedModeId, setSelectedModeId, applyRequestedMode } =
     useControlMode()
-  const { preferences, activeCameraFeeds } = useDashboardPreferences()
+  const { preferences } = useDashboardPreferences()
   const { mode } = useTelemetryMode()
   const [activeTab, setActiveTab] = useState<DashboardTabId>('overview')
   const [secondaryBarOpen, setSecondaryBarOpen] = useState(false)
   const [activeWorkspace, setActiveWorkspace] = useState<SecondaryWorkspaceId | null>(null)
-  const hasConfiguredCameraFeeds = activeCameraFeeds.length > 0
+  const discoveredCameraFeeds = snapshot.bridgeStatus?.discoveredCameraFeeds ?? []
+  const resolvedCameraFeeds = useMemo(
+    () => resolveActiveCameraFeeds(preferences.cameraFeeds, discoveredCameraFeeds),
+    [discoveredCameraFeeds, preferences.cameraFeeds],
+  )
+  const hasConfiguredCameraFeeds = resolvedCameraFeeds.length > 0
   const activeAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.currentModeId)
   const requestedAutoModeLabel = resolveControlModeLabel(controlMode, controlMode.requestedModeId)
 
@@ -162,7 +168,12 @@ export default function App() {
     <>
       <AlertsPanel alerts={alerts} />
       {preferences.layout.showCameraInSystems && hasConfiguredCameraFeeds ? (
-        <CameraViewportPanel title="Systems Camera" subtitle="live robot viewport pinned into the systems page" compact />
+        <CameraViewportPanel
+          feeds={resolvedCameraFeeds}
+          title="Systems Camera"
+          subtitle="live robot viewport pinned into the systems page"
+          compact
+        />
       ) : null}
       <BatteryPanel battery={snapshot.battery} history={batteryHistory} />
       <NetworkPanel
@@ -183,7 +194,11 @@ export default function App() {
     ) : preferences.layout.systemsLayout === 'cameraFocus' && hasConfiguredCameraFeeds ? (
       <div className="grid gap-3 xl:grid-cols-12">
         <div className="grid gap-3 xl:col-span-7">
-          <CameraViewportPanel title="Vision Surface" subtitle="camera-forward systems layout for live field checks" />
+          <CameraViewportPanel
+            feeds={resolvedCameraFeeds}
+            title="Vision Surface"
+            subtitle="camera-forward systems layout for live field checks"
+          />
         </div>
         <div className="grid gap-3 xl:col-span-5">
           <SystemsHealthPanel data={snapshot.systems} overallTone={derived.robotHealthTone} />
@@ -258,7 +273,7 @@ export default function App() {
     activeWorkspace === 'custom-telemetry'
       ? <CustomTelemetryWorkspace />
       : activeWorkspace === 'camera-wall'
-        ? <CameraWallWorkspace />
+        ? <CameraWallWorkspace feeds={resolvedCameraFeeds} />
         : primaryMain
 
   return (
@@ -273,7 +288,7 @@ export default function App() {
           controls={
             <>
               <TelemetryModeToggle />
-              <DashboardSettingsLauncher />
+              <DashboardSettingsLauncher discoveredFeeds={discoveredCameraFeeds} />
             </>
           }
           extraBadges={

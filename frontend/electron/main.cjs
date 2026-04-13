@@ -1,6 +1,7 @@
 const electronModule = require('electron')
 const { spawn } = require('node:child_process')
 const { appendFileSync, existsSync, mkdirSync } = require('node:fs')
+const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 
@@ -41,18 +42,33 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = electronModule
 const APP_NAME = 'Hotloop'
 const APP_USER_MODEL_ID = 'com.orcrobotics.orionconsole'
 
-const BRIDGE_HOST = process.env.ORION_BRIDGE_HOST ?? '127.0.0.1'
-const BRIDGE_PORT = Number.parseInt(process.env.ORION_BRIDGE_PORT ?? '8765', 10)
-const BRIDGE_BASE_URL = `http://${BRIDGE_HOST}:${BRIDGE_PORT}`
+const DEFAULT_BRIDGE_HOST = process.env.ORION_BRIDGE_HOST ?? '127.0.0.1'
+const DEFAULT_BRIDGE_PORT = Number.parseInt(process.env.ORION_BRIDGE_PORT ?? '8765', 10)
 const DEV_SERVER_URL = process.env.ORION_ELECTRON_RENDERER_URL ?? 'http://127.0.0.1:5173'
 const BRIDGE_STARTUP_TIMEOUT_MS = 5000
 const BRIDGE_POLL_INTERVAL_MS = 250
+const BRIDGE_PORT_SEARCH_RANGE = 12
+const MIN_COMPATIBLE_BRIDGE_API_VERSION = 2
+
+let bridgeHost = DEFAULT_BRIDGE_HOST
+let bridgePort = DEFAULT_BRIDGE_PORT
 
 let mainWindow = null
 let bridgeProcess = null
 let bridgeOwnedByApp = false
 let appIsQuitting = false
 let bridgeStartupPromise = null
+
+function getBridgeBaseUrl() {
+  return `http://${bridgeHost}:${bridgePort}`
+}
+
+function syncBridgeEnvironment() {
+  process.env.ORION_BRIDGE_HOST = bridgeHost
+  process.env.ORION_BRIDGE_PORT = String(bridgePort)
+}
+
+syncBridgeEnvironment()
 
 const singleInstanceLock = app.requestSingleInstanceLock()
 
@@ -182,12 +198,112 @@ async function resolvePythonCommand() {
   return null
 }
 
+async function canLaunchLocalBridge() {
+  if (existsSync(resolveBridgeExecutablePath())) {
+    return true
+  }
+
+  return Boolean(await resolvePythonCommand())
+}
+
+function canBindPort(host, port) {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+
+    server.once('error', () => {
+      resolve(false)
+    })
+
+    server.once('listening', () => {
+      server.close(() => resolve(true))
+    })
+
+    server.listen(port, host)
+  })
+}
+
+async function inspectBridgePort(host, port) {
+  const baseUrl = `http://${host}:${port}`
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 1200)
+
+  try {
+    const response = await fetch(`${baseUrl}/api/bridge/connection`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      return { healthy: false, compatible: false, apiVersion: null }
+    }
+
+    const payload = await response.json()
+    const bridgeStatus = payload?.bridgeStatus ?? null
+    const apiVersion =
+      typeof bridgeStatus?.bridgeApiVersion === 'number'
+        ? bridgeStatus.bridgeApiVersion
+        : null
+    const compatible =
+      (apiVersion !== null && apiVersion >= MIN_COMPATIBLE_BRIDGE_API_VERSION) ||
+      Array.isArray(bridgeStatus?.discoveredCameraFeeds)
+
+    return {
+      healthy: true,
+      compatible,
+      apiVersion,
+    }
+  } catch {
+    return { healthy: false, compatible: false, apiVersion: null }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function resolveBridgeRuntimePort() {
+  const defaultInspection = await inspectBridgePort(DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT)
+  if (defaultInspection.compatible) {
+    return DEFAULT_BRIDGE_PORT
+  }
+
+  if (!defaultInspection.healthy && (await canBindPort(DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT))) {
+    return DEFAULT_BRIDGE_PORT
+  }
+
+  if (defaultInspection.healthy && !defaultInspection.compatible) {
+    logRuntime(
+      `stale bridge detected on ${DEFAULT_BRIDGE_HOST}:${DEFAULT_BRIDGE_PORT}; searching for alternate port`,
+    )
+
+    if (!(await canLaunchLocalBridge())) {
+      logRuntime(
+        'no compatible local bridge runtime is available in this session; keeping the existing bridge target',
+      )
+      return DEFAULT_BRIDGE_PORT
+    }
+  }
+
+  for (let offset = 1; offset <= BRIDGE_PORT_SEARCH_RANGE; offset += 1) {
+    const candidatePort = DEFAULT_BRIDGE_PORT + offset
+    const inspection = await inspectBridgePort(DEFAULT_BRIDGE_HOST, candidatePort)
+
+    if (inspection.compatible) {
+      return candidatePort
+    }
+
+    if (!inspection.healthy && (await canBindPort(DEFAULT_BRIDGE_HOST, candidatePort))) {
+      return candidatePort
+    }
+  }
+
+  return DEFAULT_BRIDGE_PORT
+}
+
 async function isBridgeHealthy() {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 1200)
 
   try {
-    const response = await fetch(`${BRIDGE_BASE_URL}/health`, {
+    const response = await fetch(`${getBridgeBaseUrl()}/health`, {
       cache: 'no-store',
       signal: controller.signal,
     })
@@ -214,11 +330,18 @@ async function waitForBridgeHealth(timeoutMs) {
 }
 
 async function startBridgeIfNeededInternal() {
-  logRuntime(`checking bridge health at ${BRIDGE_BASE_URL}`)
-  if (await isBridgeHealthy()) {
+  const baseUrl = getBridgeBaseUrl()
+  logRuntime(`checking bridge health at ${baseUrl}`)
+  const bridgeInspection = await inspectBridgePort(bridgeHost, bridgePort)
+  if (bridgeInspection.compatible) {
     bridgeOwnedByApp = false
     logRuntime('bridge already healthy; reusing existing instance')
     return true
+  }
+
+  if (bridgeInspection.healthy && !bridgeInspection.compatible) {
+    logRuntime(`incompatible bridge detected at ${baseUrl}; waiting for a compatible local bridge`)
+    return false
   }
 
   if (bridgeProcess && !bridgeProcess.killed) {
@@ -235,7 +358,7 @@ async function startBridgeIfNeededInternal() {
 
   if (hasBridgeExecutable) {
     launchCommand = bridgeExecutablePath
-    launchArgs = ['--host', BRIDGE_HOST, '--port', String(BRIDGE_PORT)]
+    launchArgs = ['--host', bridgeHost, '--port', String(bridgePort)]
     launchCwd = path.dirname(bridgeExecutablePath)
     logRuntime(`using bundled bridge executable: ${bridgeExecutablePath}`)
   } else {
@@ -255,9 +378,9 @@ async function startBridgeIfNeededInternal() {
       ...pythonCommand.args,
       scriptPath,
       '--host',
-      BRIDGE_HOST,
+      bridgeHost,
       '--port',
-      String(BRIDGE_PORT),
+      String(bridgePort),
     ]
     launchCwd = path.dirname(scriptPath)
     logRuntime(`using python bridge source: ${scriptPath}`)
@@ -364,7 +487,7 @@ ipcMain.handle('orion:restart-bridge', async () => {
   const ready = await startBridgeIfNeeded()
   return {
     ok: ready,
-    bridgeBaseUrl: BRIDGE_BASE_URL,
+    bridgeBaseUrl: getBridgeBaseUrl(),
   }
 })
 
@@ -443,6 +566,9 @@ app.on('before-quit', () => {
 app.whenReady().then(async () => {
   try {
     logRuntime('app ready')
+    bridgePort = await resolveBridgeRuntimePort()
+    syncBridgeEnvironment()
+    logRuntime(`bridge runtime target selected: ${getBridgeBaseUrl()}`)
     void startBridgeIfNeeded().catch((error) => {
       logRuntime(`background bridge startup failed: ${error.stack ?? error.message ?? String(error)}`)
     })

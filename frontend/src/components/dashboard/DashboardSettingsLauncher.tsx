@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { DiscoveredCameraFeed } from '../../types/telemetry'
 import { useDashboardPreferences } from '../../preferences/useDashboardPreferences'
 import type {
   CameraFeedConfig,
@@ -42,6 +43,14 @@ const cameraKinds: Array<{ id: CameraFeedKind; label: string }> = [
   { id: 'snapshot', label: 'Snapshot / JPEG' },
   { id: 'video', label: 'Video / MP4' },
 ]
+
+function hostLabel(url: string) {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
 
 function GearIcon() {
   return (
@@ -194,7 +203,11 @@ function CameraFeedEditor({
   )
 }
 
-export function DashboardSettingsLauncher() {
+export function DashboardSettingsLauncher({
+  discoveredFeeds = [],
+}: {
+  discoveredFeeds?: DiscoveredCameraFeed[]
+}) {
   const [open, setOpen] = useState(false)
   const { themeId, setThemeId } = useTheme()
   const {
@@ -361,9 +374,48 @@ export function DashboardSettingsLauncher() {
                       Camera Feeds
                     </div>
                     <div className="mt-1 text-[0.9rem] text-[var(--text)]">
-                      Atlas ainda nao publica live view automaticamente, mas o ORION ja aceita stream manual por URL e abre uma viewport dedicada.
+                      O ORION agora procura streams publicados pelo robo via `CameraPublisher`. Os campos manuais continuam disponiveis como fallback ou para adicionar feeds extras.
                     </div>
                   </div>
+
+                  {discoveredFeeds.length ? (
+                    <div className="grid gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/76 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                            Robot-published feeds
+                          </div>
+                          <div className="mt-1 text-[0.82rem] leading-6 text-[var(--text-muted)]">
+                            Feeds detectados automaticamente no NetworkTables.
+                          </div>
+                        </div>
+                        <StatusBadge tone="good" label={`${discoveredFeeds.length} detected`} />
+                      </div>
+
+                      <div className="grid gap-2">
+                        {discoveredFeeds.map((feed) => (
+                          <div
+                            key={feed.id}
+                            className="grid gap-2 rounded-[16px] border border-[var(--border)] bg-[var(--surface)]/82 px-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-[0.82rem] font-semibold text-[var(--text)]">{feed.label}</div>
+                              <div className="flex flex-wrap gap-2">
+                                <StatusBadge tone={feed.connected ? 'good' : 'warning'} label={feed.connected ? 'online' : 'published'} />
+                                <StatusBadge tone="neutral" label={feed.kind} />
+                              </div>
+                            </div>
+                            <div className="text-[0.78rem] text-[var(--text-muted)]">{hostLabel(feed.url)}</div>
+                            <div className="truncate text-[0.76rem] text-[var(--text-muted)]">{feed.url}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-[20px] border border-dashed border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-4 text-[0.82rem] leading-6 text-[var(--text-muted)]">
+                      Nenhum feed automatico foi encontrado ainda. Assim que o robo publicar uma camera pelo CameraServer, ela deve aparecer aqui sem precisar colar URL.
+                    </div>
+                  )}
 
                   <div className="space-y-3">
                     {preferences.cameraFeeds.map((feed) => (

@@ -81,6 +81,7 @@ function createSimulationBridgeStatus(timestamp: string): BridgeStatus {
     teamNumber: 1234,
     manualHost: null,
     connectionPreference: 'team-auto',
+    discoveredCameraFeeds: [],
     lastSyncAt: timestamp,
     message: 'Simulation data source active.',
   }

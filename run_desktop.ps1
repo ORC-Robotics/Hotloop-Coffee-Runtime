@@ -10,6 +10,8 @@ $frontendDir = Join-Path $workspaceRoot "frontend"
 $nodeModulesDir = Join-Path $frontendDir "node_modules"
 $npmPackageLock = Join-Path $frontendDir "package-lock.json"
 $electronBuilderCmd = Join-Path $frontendDir "node_modules\.bin\electron-builder.cmd"
+$bridgeDistDir = Join-Path $frontendDir "bridge-dist"
+$bridgeExecutablePath = Join-Path $bridgeDistDir "orion-telemetry-bridge.exe"
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
 
 function Test-ExecutablePath {
@@ -220,6 +222,32 @@ function Invoke-Npm {
     }
 }
 
+function Test-BridgeRebuildRequired {
+    $bridgeSourcePaths = @(
+        (Join-Path $workspaceRoot "telemetry_bridge.py"),
+        (Join-Path $workspaceRoot "nt_client.py"),
+        (Join-Path $workspaceRoot "requirements.txt"),
+        (Join-Path $frontendDir "scripts\build-bridge.mjs")
+    )
+
+    if (-not (Test-Path $bridgeExecutablePath)) {
+        return $true
+    }
+
+    $bridgeBinaryLastWrite = (Get-Item $bridgeExecutablePath).LastWriteTimeUtc
+    foreach ($sourcePath in $bridgeSourcePaths) {
+        if (-not (Test-Path $sourcePath)) {
+            continue
+        }
+
+        if ((Get-Item $sourcePath).LastWriteTimeUtc -gt $bridgeBinaryLastWrite) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 $nodeToolchain = Resolve-NodeInstallation
 $nodeDir = $nodeToolchain.Directory
 $nodeExe = $nodeToolchain.NodeExe
@@ -265,6 +293,11 @@ if ($Build) {
     Invoke-Npm -Arguments @("run", "build:desktop")
     Write-Host "Pacote concluido em frontend/release."
     exit 0
+}
+
+if (Test-BridgeRebuildRequired) {
+    Write-Host "Compilando telemetry bridge local..."
+    Invoke-Npm -Arguments @("run", "build:bridge")
 }
 
 Write-Host "Abrindo ORION Console em modo de desenvolvimento..."

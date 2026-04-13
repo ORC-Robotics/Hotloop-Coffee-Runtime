@@ -3,6 +3,7 @@ export type UiTone = 'good' | 'warning' | 'critical' | 'info' | 'neutral'
 export type ConnectionMode = 'team-auto' | 'manual-fallback' | 'mock-bridge'
 export type BridgeConnectionPreference = 'team-auto' | 'manual-host'
 export type TelemetryTopicScope = 'telemetry' | 'debug' | 'config' | 'auto-mode' | 'other'
+export type DiscoveredCameraFeedKind = 'mjpeg' | 'snapshot' | 'video'
 export type TelemetryTopicValueKind =
   | 'number'
   | 'boolean'
@@ -153,7 +154,19 @@ export interface RemoteDriverStatus {
   lastActionAt?: string
 }
 
+export interface DiscoveredCameraFeed {
+  id: string
+  label: string
+  url: string
+  kind: DiscoveredCameraFeedKind
+  connected: boolean
+  source?: string | null
+  description?: string | null
+  origin: 'networktables'
+}
+
 export interface BridgeStatus {
+  bridgeApiVersion?: number
   transport: string
   chooserPath: string
   telemetryEndpoint: string
@@ -168,6 +181,7 @@ export interface BridgeStatus {
   connectionPreference?: BridgeConnectionPreference
   lastSyncAt?: string
   message?: string
+  discoveredCameraFeeds?: DiscoveredCameraFeed[]
 }
 
 export type TelemetryTopicScalarValue = number | boolean | string | null

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDashboardPreferences } from '../../preferences/useDashboardPreferences'
 import type { CameraFeedConfig } from '../../preferences/dashboardPreferencesStore'
+import type { ResolvedCameraFeed } from '../../lib/cameraFeeds'
 import { DashboardCard } from './DashboardCard'
 import { StatusBadge } from './StatusBadge'
 
@@ -39,7 +40,14 @@ function useSnapshotUrl(feed: CameraFeedConfig) {
   }, [feed.kind, feed.url, tick])
 }
 
-function CameraTile({ feed, compact = false }: { feed: CameraFeedConfig; compact?: boolean }) {
+function toResolvedManualFeed(feed: CameraFeedConfig): ResolvedCameraFeed {
+  return {
+    ...feed,
+    source: 'manual',
+  }
+}
+
+function CameraTile({ feed, compact = false }: { feed: ResolvedCameraFeed; compact?: boolean }) {
   const [resourceState, setResourceState] = useState<{
     key: string
     status: 'loading' | 'live' | 'error'
@@ -70,6 +78,7 @@ function CameraTile({ feed, compact = false }: { feed: CameraFeedConfig; compact
             tone={status === 'live' ? 'good' : status === 'loading' ? 'warning' : 'critical'}
             label={status === 'live' ? 'live' : status === 'loading' ? 'connecting' : 'unavailable'}
           />
+          <StatusBadge tone={feed.source === 'auto' ? 'info' : 'neutral'} label={feed.source === 'auto' ? 'auto' : 'manual'} />
           <StatusBadge tone="neutral" label={feed.kind} />
         </div>
       </div>
@@ -108,15 +117,21 @@ function CameraTile({ feed, compact = false }: { feed: CameraFeedConfig; compact
 }
 
 export function CameraViewportPanel({
+  feeds,
   title = 'Camera Viewports',
   subtitle = 'live robot vision feeds',
   compact = false,
 }: {
+  feeds?: ResolvedCameraFeed[]
   title?: string
   subtitle?: string
   compact?: boolean
 }) {
   const { activeCameraFeeds } = useDashboardPreferences()
+  const resolvedFeeds = useMemo(
+    () => feeds ?? activeCameraFeeds.map((feed) => toResolvedManualFeed(feed)),
+    [activeCameraFeeds, feeds],
+  )
 
   return (
     <DashboardCard
@@ -126,20 +141,20 @@ export function CameraViewportPanel({
       className="min-h-[0]"
       headerSlot={
         <StatusBadge
-          tone={activeCameraFeeds.length ? 'good' : 'warning'}
-          label={activeCameraFeeds.length ? `${activeCameraFeeds.length} live slot${activeCameraFeeds.length > 1 ? 's' : ''}` : 'no feeds'}
+          tone={resolvedFeeds.length ? 'good' : 'warning'}
+          label={resolvedFeeds.length ? `${resolvedFeeds.length} live slot${resolvedFeeds.length > 1 ? 's' : ''}` : 'no feeds'}
         />
       }
     >
-      {activeCameraFeeds.length ? (
-        <div className={`grid gap-3 ${activeCameraFeeds.length > 1 ? 'xl:grid-cols-2' : ''}`}>
-          {activeCameraFeeds.map((feed) => (
+      {resolvedFeeds.length ? (
+        <div className={`grid gap-3 ${resolvedFeeds.length > 1 ? 'xl:grid-cols-2' : ''}`}>
+          {resolvedFeeds.map((feed) => (
             <CameraTile key={feed.id} feed={feed} compact={compact} />
           ))}
         </div>
       ) : (
         <div className="rounded-[20px] border border-dashed border-[var(--border)] bg-[var(--surface-alt)]/76 px-4 py-6 text-[0.86rem] leading-7 text-[var(--text-muted)]">
-          Atlas ainda nao publica um stream de camera por padrao, mas o ORION agora aceita viewport por URL. Quando voce tiver um feed MJPEG, snapshot ou video, basta configurar em Settings para ele aparecer aqui.
+          O ORION agora tenta localizar streams publicados em `CameraPublisher` automaticamente. Se o robo ainda nao anunciar nenhuma live, voce pode manter o fallback manual em Settings usando uma URL MJPEG, snapshot ou video.
         </div>
       )}
     </DashboardCard>

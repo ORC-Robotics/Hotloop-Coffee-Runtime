@@ -57,6 +57,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     teamNumber: 0,
     manualHost: null,
     connectionPreference: 'team-auto',
+    discoveredCameraFeeds: [],
     message: 'Bridge status unavailable.',
   }
 }

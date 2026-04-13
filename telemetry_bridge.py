@@ -7,14 +7,17 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from nt_client import NTClient, load_team_number
 
 
 AUTO_MODE_CHOOSER_PATH = "Auto mode"
+CAMERA_PUBLISHER_PATH = "CameraPublisher"
 APPLIED_STATUS_HOLD = timedelta(seconds=2)
 PENDING_TIMEOUT = timedelta(seconds=5)
 TOPIC_SCOPE_ORDER = ("telemetry", "debug", "config", "auto-mode", "other")
+CAMERA_LOOPBACK_HOSTS = {"", "0.0.0.0", "127.0.0.1", "::1", "localhost"}
 
 NT_TYPE_BOOLEAN = 0x01
 NT_TYPE_DOUBLE = 0x02
@@ -166,6 +169,100 @@ def normalize_topic_value(value: Any, type_id: int) -> tuple[str, Any, str]:
         return "raw", None, "raw payload"
 
     return normalize_scalar_value(value)
+
+
+def extract_camera_stream_url(raw_value: Any) -> tuple[str | None, str | None]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None, None
+
+    http_candidates = [index for index in (text.find("http://"), text.find("https://")) if index >= 0]
+    if http_candidates:
+        url_index = min(http_candidates)
+        prefix = text[:url_index].strip(": ").lower() or None
+        return text[url_index:], prefix
+
+    return None, None
+
+
+def infer_camera_feed_kind(url: str, prefix: str | None = None) -> str:
+    lowered_url = url.lower()
+    lowered_prefix = (prefix or "").lower()
+
+    if lowered_prefix in {"mjpg", "mjpeg"}:
+        return "mjpeg"
+    if lowered_prefix == "snapshot":
+        return "snapshot"
+    if lowered_prefix == "video":
+        return "video"
+
+    if any(token in lowered_url for token in ("action=stream", ".mjpg", ".mjpeg")):
+        return "mjpeg"
+    if any(token in lowered_url for token in ("action=snapshot", ".jpg", ".jpeg", ".png")):
+        return "snapshot"
+    if any(token in lowered_url for token in (".mp4", ".webm", ".mov", ".mkv")):
+        return "video"
+    return "mjpeg"
+
+
+def replace_camera_host(url: str, host: str | None) -> str:
+    if not host:
+        return url
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if hostname not in CAMERA_LOOPBACK_HOSTS:
+        return url
+
+    replacement_host = host.strip()
+    if not replacement_host:
+        return url
+
+    netloc = replacement_host
+    if parsed.port is not None:
+        needs_ipv6_brackets = ":" in replacement_host and not replacement_host.startswith("[")
+        host_for_netloc = f"[{replacement_host}]" if needs_ipv6_brackets else replacement_host
+        netloc = f"{host_for_netloc}:{parsed.port}"
+
+    if parsed.username:
+        credentials = parsed.username
+        if parsed.password:
+            credentials = f"{credentials}:{parsed.password}"
+        netloc = f"{credentials}@{netloc}"
+
+    try:
+        return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:
+        return url
+
+
+def camera_url_score(url: str, preferred_host: str | None, team_ip_host: str) -> int:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return 0
+
+    score = 0
+    host = (parsed.hostname or "").strip().lower()
+    preferred = (preferred_host or "").strip().lower()
+    team_host = team_ip_host.strip().lower()
+
+    if parsed.scheme in {"http", "https"}:
+        score += 5
+    if host:
+        score += 5
+    if host == preferred and preferred:
+        score += 50
+    elif host == team_host:
+        score += 25
+    elif host.endswith(".local"):
+        score += 10
+
+    return score
 
 
 def serialize_topic_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -539,6 +636,79 @@ class TelemetryBridge:
         self.control_mode = ControlModeManager(self.client)
         self.remote_driver = RemoteDriverManager(self.client)
 
+    def _preferred_camera_host(self) -> str | None:
+        host_candidates = [
+            self.client.connected_host,
+            self.client.connection_target,
+            self.client.manual_host,
+            f"roborio-{self.client.team}-frc.local",
+            f"10.{self.client.team // 100}.{self.client.team % 100}.2",
+        ]
+
+        for candidate in host_candidates:
+            normalized = str(candidate or "").strip()
+            if not normalized or normalized == "unknown":
+                continue
+            if normalized.lower() in CAMERA_LOOPBACK_HOSTS:
+                continue
+            if " " in normalized:
+                continue
+            return normalized
+
+        return None
+
+    def discovered_camera_feeds(self) -> list[dict[str, Any]]:
+        preferred_host = self._preferred_camera_host()
+        team_ip_host = f"10.{self.client.team // 100}.{self.client.team % 100}.2"
+        feeds: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+
+        for subtable_name in self.client.get_table_subtables(CAMERA_PUBLISHER_PATH):
+            table_path = f"{CAMERA_PUBLISHER_PATH}/{subtable_name}"
+            stream_values = self.client.get_table_string_array(table_path, "streams", [])
+            single_stream = self.client.get_table_string(table_path, "stream", "")
+            if single_stream:
+                stream_values.append(single_stream)
+
+            candidates: list[tuple[int, str, str]] = []
+            for raw_stream in stream_values:
+                extracted_url, prefix = extract_camera_stream_url(raw_stream)
+                if not extracted_url:
+                    continue
+
+                normalized_url = replace_camera_host(extracted_url, preferred_host)
+                kind = infer_camera_feed_kind(normalized_url, prefix)
+                score = camera_url_score(normalized_url, preferred_host, team_ip_host)
+                candidates.append((score, normalized_url, kind))
+
+            if not candidates:
+                continue
+
+            _, best_url, best_kind = max(candidates, key=lambda candidate: candidate[0])
+            url_key = best_url.strip().lower()
+            if not url_key or url_key in seen_urls:
+                continue
+
+            seen_urls.add(url_key)
+            description = self.client.get_table_string(table_path, "description", "")
+            source = self.client.get_table_string(table_path, "source", "")
+            connected = self.client.get_table_bool(table_path, "connected", True)
+
+            feeds.append(
+                {
+                    "id": subtable_name,
+                    "label": subtable_name or description or f"Camera {len(feeds) + 1}",
+                    "url": best_url,
+                    "kind": best_kind,
+                    "connected": connected,
+                    "source": source or None,
+                    "description": description or None,
+                    "origin": "networktables",
+                }
+            )
+
+        return feeds
+
     def _get_bool_alias(self, *keys: str, default: bool = False) -> bool:
         for key in keys:
             if self.client.has_key(key):
@@ -567,7 +737,9 @@ class TelemetryBridge:
     def bridge_status(self) -> dict[str, Any]:
         control_state = self.control_mode.payload()
         connection_settings = self.client.get_connection_settings()
+        discovered_camera_feeds = self.discovered_camera_feeds()
         return {
+            "bridgeApiVersion": 2,
             "transport": "networktables",
             "chooserPath": f"SmartDashboard/{AUTO_MODE_CHOOSER_PATH}",
             "telemetryEndpoint": "/api/telemetry",
@@ -582,6 +754,7 @@ class TelemetryBridge:
             "connectionPreference": connection_settings.get("connectionPreference", "team-auto"),
             "lastSyncAt": control_state.get("lastSyncAt"),
             "message": control_state.get("message"),
+            "discoveredCameraFeeds": discovered_camera_feeds,
         }
 
     def update_connection_settings(
