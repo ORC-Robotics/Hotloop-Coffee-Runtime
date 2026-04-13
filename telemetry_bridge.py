@@ -38,6 +38,7 @@ REMOTE_DRIVER_ACTIONS = {
     "estop",
 }
 REMOTE_DRIVER_SESSION_MODES = {"teleop", "autonomous"}
+BRIDGE_CONNECTION_PREFERENCES = {"team-auto", "manual-host"}
 
 
 def utc_now() -> datetime:
@@ -565,6 +566,7 @@ class TelemetryBridge:
 
     def bridge_status(self) -> dict[str, Any]:
         control_state = self.control_mode.payload()
+        connection_settings = self.client.get_connection_settings()
         return {
             "transport": "networktables",
             "chooserPath": f"SmartDashboard/{AUTO_MODE_CHOOSER_PATH}",
@@ -573,10 +575,43 @@ class TelemetryBridge:
             "topicCatalogEndpoint": "/api/topics",
             "topicWriteEndpoint": "/api/topics/write",
             "remoteDriverEndpoint": "/api/remote-driver",
-            "connected": self.client.is_connected(),
+            "connected": True,
+            "robotLinkConnected": self.client.is_connected(),
+            "teamNumber": connection_settings.get("teamNumber", self.client.team),
+            "manualHost": connection_settings.get("manualHost"),
+            "connectionPreference": connection_settings.get("connectionPreference", "team-auto"),
             "lastSyncAt": control_state.get("lastSyncAt"),
             "message": control_state.get("message"),
         }
+
+    def update_connection_settings(
+        self,
+        manual_host: str | None = None,
+        connection_preference: str | None = None,
+        reconnect: bool = True,
+    ) -> tuple[dict[str, Any], HTTPStatus]:
+        normalized_preference = (
+            connection_preference.strip().lower() if connection_preference is not None else None
+        )
+        if normalized_preference is not None and normalized_preference not in BRIDGE_CONNECTION_PREFERENCES:
+            return {"error": "unsupported connection preference"}, HTTPStatus.BAD_REQUEST
+
+        normalized_host = manual_host.strip() if manual_host is not None else None
+        settings = self.client.update_connection_settings(
+            manual_host=normalized_host,
+            connection_preference=normalized_preference,
+            reconnect=reconnect,
+        )
+
+        message = (
+            f"Robot link reconnect requested via {settings.get('connectionPreference', 'team-auto')}."
+            if reconnect
+            else "Bridge connection settings updated."
+        )
+        return {
+            "message": message,
+            "bridgeStatus": self.bridge_status(),
+        }, HTTPStatus.ACCEPTED
 
     def topics_payload(self) -> dict[str, Any]:
         topics: list[dict[str, Any]] = []
@@ -868,6 +903,14 @@ def build_handler(bridge: TelemetryBridge):
                 )
                 return
 
+            if self.path == "/api/bridge/connection":
+                self._send_json(
+                    {
+                        "bridgeStatus": bridge.bridge_status(),
+                    }
+                )
+                return
+
             self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:  # noqa: N802
@@ -952,6 +995,34 @@ def build_handler(bridge: TelemetryBridge):
                         if driver_payload.get("sessionMode") is not None
                         else None
                     ),
+                )
+                self._send_json(
+                    {
+                        **response,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
+                return
+
+            if self.path == "/api/bridge/connection":
+                if payload.get("type") != "update_bridge_connection":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                connection_payload = payload.get("payload", {})
+                response, status = bridge.update_connection_settings(
+                    manual_host=(
+                        str(connection_payload.get("manualHost")).strip()
+                        if connection_payload.get("manualHost") is not None
+                        else None
+                    ),
+                    connection_preference=(
+                        str(connection_payload.get("connectionPreference")).strip()
+                        if connection_payload.get("connectionPreference") is not None
+                        else None
+                    ),
+                    reconnect=bool(connection_payload.get("reconnect", True)),
                 )
                 self._send_json(
                     {

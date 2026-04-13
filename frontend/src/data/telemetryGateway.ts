@@ -2,6 +2,8 @@ import * as onlineDataSource from './robotBridge'
 import * as simulationDataSource from './simulationDataSource'
 import { getTelemetryMode } from '../telemetry-mode/telemetryModeStore'
 import type {
+  BridgeConnectionPreference,
+  BridgeConnectionResponse,
   ControlModeFeed,
   RemoteDriverAction,
   RemoteDriverResponse,
@@ -65,6 +67,18 @@ export async function sendRemoteDriverAction(
   sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
   return activeSource().sendRemoteDriverAction(action, source, sessionMode)
+}
+
+export async function getBridgeConnectionStatus(): Promise<BridgeConnectionResponse> {
+  return activeSource().getBridgeConnectionStatus()
+}
+
+export async function updateBridgeConnection(
+  manualHost?: string | null,
+  connectionPreference?: BridgeConnectionPreference,
+  reconnect = true,
+): Promise<BridgeConnectionResponse> {
+  return activeSource().updateBridgeConnection(manualHost, connectionPreference, reconnect)
 }
 
 export async function writeTelemetryTopicValue(

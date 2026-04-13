@@ -13,6 +13,7 @@ from networktables import NetworkTablesInstance
 
 DEFAULT_TEAM = 1234
 NT_PORT = 1735
+BRIDGE_CONFIG_PATH = Path.home() / ".hotloop" / "bridge_connection.json"
 
 
 def load_team_number() -> int:
@@ -40,15 +41,33 @@ def load_team_number() -> int:
     return DEFAULT_TEAM
 
 
+def load_bridge_connection_config() -> dict[str, Any]:
+    try:
+        if BRIDGE_CONFIG_PATH.exists():
+            return json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def save_bridge_connection_config(config: dict[str, Any]) -> None:
+    try:
+        BRIDGE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        BRIDGE_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def team_to_ip_prefix(team: int) -> str:
     return f"10.{team // 100}.{team % 100}"
 
 
-def candidate_hosts(team: int) -> list[str]:
+def candidate_hosts(team: int, manual_host: str | None = None) -> list[str]:
     prefix = team_to_ip_prefix(team)
     hosts: list[str] = []
 
-    manual_host = os.getenv("ROBOT_HOST")
+    if manual_host is None:
+        manual_host = os.getenv("ROBOT_HOST")
     if manual_host:
         hosts.append(manual_host)
 
@@ -88,20 +107,59 @@ def first_reachable_host(
 
 class NTClient:
     def __init__(self, team: int):
-        self.team = team
+        config = load_bridge_connection_config()
+        configured_team = config.get("teamNumber")
+        self.team = configured_team if isinstance(configured_team, int) and configured_team > 0 else team
         self.inst = NetworkTablesInstance.getDefault()
         self.sd = self.inst.getTable("SmartDashboard")
         self.connection_mode = "team-auto"
-        self.connection_target = f"team {team}"
+        self.connection_target = f"team {self.team}"
         self.connected_host = "unknown"
+        env_manual_host = os.getenv("ROBOT_HOST")
+        configured_manual_host = config.get("manualHost")
+        self.manual_host = str(env_manual_host or configured_manual_host or "").strip() or None
+        configured_preference = str(config.get("connectionPreference", "")).strip().lower()
+        if configured_preference == "manual-host" and self.manual_host:
+            self.connection_preference = "manual-host"
+        else:
+            self.connection_preference = "team-auto"
         self._lock = threading.Lock()
 
-        self._start_client()
+        with self._lock:
+            self._start_client_locked()
 
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
 
-    def _start_client(self) -> None:
+    def _persist_connection_config(self) -> None:
+        save_bridge_connection_config(
+            {
+                "teamNumber": self.team,
+                "manualHost": self.manual_host,
+                "connectionPreference": self.connection_preference,
+            }
+        )
+
+    def _stop_client_locked(self) -> None:
+        stop_client = getattr(self.inst, "stopClient", None)
+        if callable(stop_client):
+            try:
+                stop_client()
+            except Exception:
+                pass
+
+    def _start_client_locked(self) -> None:
+        self._stop_client_locked()
+
+        if self.connection_preference == "manual-host" and self.manual_host:
+            start_client = getattr(self.inst, "startClient", None)
+            self.connection_mode = "manual-fallback"
+            self.connection_target = self.manual_host
+            self.connected_host = self.manual_host
+            if callable(start_client):
+                start_client(self.manual_host)
+            return
+
         hosts = candidate_hosts(self.team)
 
         start_client_team = getattr(self.inst, "startClientTeam", None)
@@ -110,6 +168,7 @@ class NTClient:
         if callable(start_client_team):
             self.connection_mode = "team-auto"
             self.connection_target = f"team {self.team}"
+            self.connected_host = "unknown"
             start_client_team(self.team)
             if callable(start_ds):
                 start_ds()
@@ -118,41 +177,73 @@ class NTClient:
         host = first_reachable_host(hosts) or hosts[0]
         self.connection_mode = "manual-fallback"
         self.connection_target = host
-
-        stop_client = getattr(self.inst, "stopClient", None)
+        self.connected_host = host
         start_client = getattr(self.inst, "startClient", None)
-
-        if callable(stop_client):
-            try:
-                stop_client()
-            except Exception:
-                pass
 
         if callable(start_client):
             start_client(host)
+
+    def reconnect(self) -> None:
+        with self._lock:
+            self._start_client_locked()
+
+    def get_connection_settings(self) -> dict[str, Any]:
+        return {
+            "teamNumber": self.team,
+            "manualHost": self.manual_host,
+            "connectionPreference": self.connection_preference,
+        }
+
+    def update_connection_settings(
+        self,
+        manual_host: str | None = None,
+        connection_preference: str | None = None,
+        reconnect: bool = True,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if manual_host is not None:
+                self.manual_host = str(manual_host).strip() or None
+
+            if connection_preference in {"team-auto", "manual-host"}:
+                if connection_preference == "manual-host" and not self.manual_host:
+                    self.connection_preference = "team-auto"
+                else:
+                    self.connection_preference = connection_preference
+            elif self.manual_host and self.connection_preference == "manual-host":
+                self.connection_preference = "manual-host"
+
+            if self.connection_preference != "manual-host":
+                self.manual_host = None
+
+            self._persist_connection_config()
+
+            if reconnect:
+                self._start_client_locked()
+
+            return self.get_connection_settings()
 
     def _monitor_loop(self) -> None:
         while True:
             try:
                 connected = self.is_connected()
-                if not connected and self.connection_mode == "manual-fallback":
-                    host = first_reachable_host(candidate_hosts(self.team))
-                    if host and host != self.connection_target:
-                        with self._lock:
-                            self.connection_target = host
-                            stop_client = getattr(self.inst, "stopClient", None)
-                            start_client = getattr(self.inst, "startClient", None)
-                            if callable(stop_client):
-                                try:
-                                    stop_client()
-                                except Exception:
-                                    pass
-                            if callable(start_client):
-                                start_client(host)
+                if not connected:
+                    with self._lock:
+                        if self.connection_preference == "manual-host" and self.manual_host:
+                            if self.connection_target != self.manual_host:
+                                self.connection_target = self.manual_host
+                            self._start_client_locked()
+                        elif self.connection_mode == "manual-fallback":
+                            host = first_reachable_host(candidate_hosts(self.team))
+                            if host and host != self.connection_target:
+                                self.connection_target = host
+                                self._start_client_locked()
                 else:
-                    reachable = first_reachable_host(candidate_hosts(self.team))
-                    if reachable:
-                        self.connected_host = reachable
+                    if self.connection_preference == "manual-host" and self.manual_host:
+                        self.connected_host = self.manual_host
+                    else:
+                        reachable = first_reachable_host(candidate_hosts(self.team))
+                        if reachable:
+                            self.connected_host = reachable
             except Exception:
                 pass
 

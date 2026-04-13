@@ -6,7 +6,7 @@
   <a href="https://github.com/ORC-Robotics/Hotloop-Coffee-Runtime/actions/workflows/release-desktop.yml">
     <img src="https://github.com/ORC-Robotics/Hotloop-Coffee-Runtime/actions/workflows/release-desktop.yml/badge.svg" alt="Release Desktop workflow" />
   </a>
-  <img src="https://img.shields.io/badge/version-v0.2.0-8b5a3c?style=for-the-badge" alt="Version 0.2.0" />
+  <img src="https://img.shields.io/badge/version-v0.3.1-8b5a3c?style=for-the-badge" alt="Version 0.3.1" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3d8bff?style=for-the-badge&labelColor=050608" alt="Windows and Linux" />
   <img src="https://img.shields.io/badge/Electron-37-101317?style=for-the-badge&logo=electron&logoColor=9FEAF9" alt="Electron 37" />
   <img src="https://img.shields.io/badge/React-19-101317?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
@@ -97,10 +97,10 @@ Example:
 
 ```powershell
 git add .
-git commit -m "release: prepare Hotloop v0.2.0"
+git commit -m "release: prepare Hotloop v0.x.0"
 git push
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.x.0
+git push origin v0.x.0
 ```
 
 ## Runtime Flow

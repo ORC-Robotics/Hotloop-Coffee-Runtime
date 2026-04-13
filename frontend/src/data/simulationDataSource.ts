@@ -1,6 +1,8 @@
 import { clamp } from '../lib/format'
 import { generateMockTelemetryFrame } from './mockTelemetry'
 import type {
+  BridgeConnectionPreference,
+  BridgeConnectionResponse,
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
@@ -75,6 +77,10 @@ function createSimulationBridgeStatus(timestamp: string): BridgeStatus {
     topicWriteEndpoint: 'simulation://topics/write',
     remoteDriverEndpoint: 'simulation://remote-driver',
     connected: true,
+    robotLinkConnected: true,
+    teamNumber: 1234,
+    manualHost: null,
+    connectionPreference: 'team-auto',
     lastSyncAt: timestamp,
     message: 'Simulation data source active.',
   }
@@ -503,6 +509,42 @@ class SimulationEngine {
     }
   }
 
+  getBridgeConnectionStatus(): BridgeConnectionResponse {
+    this.ensureClock()
+    this.refresh(Date.now())
+
+    return {
+      bridgeStatus: this.bridgeStatus,
+      message: 'Simulation backend is always available.',
+    }
+  }
+
+  updateBridgeConnection(
+    manualHost?: string | null,
+    connectionPreference?: BridgeConnectionPreference,
+    reconnect = true,
+  ): BridgeConnectionResponse {
+    this.bridgeStatus = {
+      ...this.bridgeStatus,
+      manualHost: manualHost?.trim() || null,
+      connectionPreference:
+        connectionPreference === 'manual-host' && manualHost?.trim()
+          ? 'manual-host'
+          : 'team-auto',
+      message: reconnect
+        ? 'Simulation reconnect requested.'
+        : 'Simulation bridge settings updated.',
+    }
+
+    this.refresh(Date.now())
+    this.publish()
+
+    return {
+      bridgeStatus: this.bridgeStatus,
+      message: this.bridgeStatus.message,
+    }
+  }
+
   requestControlModeChange(modeId: string): ControlModeFeed {
     const timestamp = nowIso()
     const available = this.controlMode.availableModes.some((mode) => mode.id === modeId && mode.isAvailable)
@@ -762,6 +804,18 @@ export function subscribeTelemetryCatalog(
 
 export async function getControlModes(): Promise<ControlModeFeed> {
   return engine.getControlModes()
+}
+
+export async function getBridgeConnectionStatus(): Promise<BridgeConnectionResponse> {
+  return engine.getBridgeConnectionStatus()
+}
+
+export async function updateBridgeConnection(
+  manualHost?: string | null,
+  connectionPreference?: BridgeConnectionPreference,
+  reconnect = true,
+): Promise<BridgeConnectionResponse> {
+  return engine.updateBridgeConnection(manualHost, connectionPreference, reconnect)
 }
 
 export async function requestControlModeChange(modeId: string): Promise<ControlModeFeed> {

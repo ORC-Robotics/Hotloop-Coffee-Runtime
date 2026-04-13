@@ -21,8 +21,15 @@ function createFallbackBridgeStatus(): BridgeStatus {
     chooserPath: 'SmartDashboard/Auto mode',
     telemetryEndpoint: '/api/telemetry',
     controlModeEndpoint: '/api/control-mode',
+    topicCatalogEndpoint: '/api/topics',
+    topicWriteEndpoint: '/api/topics/write',
+    remoteDriverEndpoint: '/api/remote-driver',
     connected: false,
-    message: 'Waiting for bridge.',
+    robotLinkConnected: false,
+    teamNumber: 0,
+    manualHost: null,
+    connectionPreference: 'team-auto',
+    message: 'Waiting for bridge backend.',
   }
 }
 
@@ -59,6 +66,12 @@ export function useControlMode() {
           return
         }
 
+        setBridgeStatus((previous) => ({
+          ...previous,
+          connected: false,
+          robotLinkConnected: false,
+          message: 'Bridge backend unavailable. AUTOMODE sync is paused.',
+        }))
         setControlMode((previous) => ({
           ...previous,
           syncStatus: previous.lastSyncAt ? 'stale' : 'unavailable',
@@ -93,6 +106,12 @@ export function useControlMode() {
       }
       setSelectedModeId(response.controlMode.requestedModeId ?? response.controlMode.currentModeId ?? modeId)
     } catch {
+      setBridgeStatus((previous) => ({
+        ...previous,
+        connected: false,
+        robotLinkConnected: false,
+        message: 'Bridge backend unavailable. Failed to publish the automode request.',
+      }))
       setControlMode((previous) => ({
         ...previous,
         syncStatus: previous.lastSyncAt ? 'stale' : 'unavailable',

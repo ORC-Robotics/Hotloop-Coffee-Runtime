@@ -1,4 +1,5 @@
 import type {
+  BridgeConnectionPreference,
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
@@ -36,6 +37,10 @@ function createFallbackBridgeStatus(): BridgeStatus {
     topicWriteEndpoint: '/api/topics/write',
     remoteDriverEndpoint: '/api/remote-driver',
     connected: false,
+    robotLinkConnected: false,
+    teamNumber: 0,
+    manualHost: null,
+    connectionPreference: 'team-auto' satisfies BridgeConnectionPreference,
     message: 'Bridge status unavailable.',
   }
 }

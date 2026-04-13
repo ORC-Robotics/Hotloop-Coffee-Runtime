@@ -5,6 +5,10 @@ declare global {
     orionDesktop?: {
       isElectron: boolean
       bridgeBaseUrl: string
+      restartBridge?: () => Promise<{
+        ok: boolean
+        bridgeBaseUrl: string
+      }>
       platform: string
       versions: {
         chrome: string

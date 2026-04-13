@@ -1,7 +1,7 @@
 {
   "name": "hotloop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Hotloop desktop operator console for Coffee Runtime robotics operations.",
   "author": {
     "name": "ORC-Robotics",

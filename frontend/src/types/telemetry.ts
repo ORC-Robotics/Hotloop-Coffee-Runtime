@@ -1,6 +1,7 @@
 export type AlertSeverity = 'critical' | 'warning' | 'info'
 export type UiTone = 'good' | 'warning' | 'critical' | 'info' | 'neutral'
 export type ConnectionMode = 'team-auto' | 'manual-fallback' | 'mock-bridge'
+export type BridgeConnectionPreference = 'team-auto' | 'manual-host'
 export type TelemetryTopicScope = 'telemetry' | 'debug' | 'config' | 'auto-mode' | 'other'
 export type TelemetryTopicValueKind =
   | 'number'
@@ -161,6 +162,10 @@ export interface BridgeStatus {
   topicWriteEndpoint?: string
   remoteDriverEndpoint?: string
   connected: boolean
+  robotLinkConnected?: boolean
+  teamNumber?: number
+  manualHost?: string | null
+  connectionPreference?: BridgeConnectionPreference
   lastSyncAt?: string
   message?: string
 }
@@ -231,6 +236,15 @@ export type RemoteDriverActionCommand = {
   }
 }
 
+export type BridgeConnectionCommand = {
+  type: 'update_bridge_connection'
+  payload: {
+    manualHost?: string | null
+    connectionPreference?: BridgeConnectionPreference
+    reconnect?: boolean
+  }
+}
+
 export interface TopicWriteResponse {
   topic?: TelemetryTopic
   message?: string
@@ -240,6 +254,12 @@ export interface TopicWriteResponse {
 
 export interface RemoteDriverResponse {
   remoteDriver?: RemoteDriverStatus
+  message?: string
+  error?: string
+  bridgeStatus?: BridgeStatus
+}
+
+export interface BridgeConnectionResponse {
   message?: string
   error?: string
   bridgeStatus?: BridgeStatus
@@ -299,6 +319,12 @@ export interface RawTelemetryCatalogPayload {
 
 export interface RawRemoteDriverPayload {
   remoteDriver?: Partial<RemoteDriverStatus>
+  bridgeStatus?: Partial<BridgeStatus>
+  message?: string
+  error?: string
+}
+
+export interface RawBridgeConnectionPayload {
   bridgeStatus?: Partial<BridgeStatus>
   message?: string
   error?: string

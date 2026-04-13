@@ -79,7 +79,11 @@ function createFallbackBridgeStatus(): BridgeStatus {
     topicWriteEndpoint: '/api/topics/write',
     remoteDriverEndpoint: '/api/remote-driver',
     connected: false,
-    message: 'Waiting for bridge.',
+    robotLinkConnected: false,
+    teamNumber: 0,
+    manualHost: null,
+    connectionPreference: 'team-auto',
+    message: 'Waiting for bridge backend.',
   }
 }
 
@@ -299,9 +303,15 @@ export function useRemoteDriver(active: boolean) {
           return
         }
 
+        setBridgeStatus((previous) => ({
+          ...previous,
+          connected: false,
+          robotLinkConnected: false,
+          message: 'Bridge backend unavailable. Check the local service or use reconnect in Network.',
+        }))
         setRemoteDriver((previous) => ({
           ...previous,
-          status: previous.status || 'Unable to reach the remote driver bridge.',
+          status: 'Unable to reach the remote driver bridge.',
         }))
       }
     }

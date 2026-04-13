@@ -86,11 +86,19 @@ export function OverviewOperatorRail({
   const sessionActive = remoteDriver.mode !== 'disabled'
   const autoModeRequired = selectedSessionMode === 'autonomous'
   const selectedAutoLabel = resolveModeLabel(controlMode, selectedModeId)
+  const localBackendOnline = bridgeStatus.connected
+  const robotLinkOnline = bridgeStatus.robotLinkConnected ?? false
   const canStart =
-    bridgeStatus.connected &&
+    localBackendOnline &&
+    robotLinkOnline &&
     !sessionActive &&
     (!autoModeRequired || Boolean(selectedModeId))
   const canDisable = sessionActive
+  const bridgeSummary = !localBackendOnline
+    ? 'Bridge backend unavailable. Open the network panel to reconnect the local service.'
+    : !robotLinkOnline
+      ? 'Bridge backend online, waiting for robot link. Use reconnect or update the robot host/IP below.'
+      : bridgeStatus.message ?? 'Bridge backend online and synchronized with the robot.'
 
   return (
     <div className="grid gap-3">
@@ -115,9 +123,7 @@ export function OverviewOperatorRail({
                 <div className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                   Bridge
                 </div>
-                <div className="mt-1 text-[0.8rem] text-[var(--text)]">
-                  {bridgeStatus.message ?? (bridgeStatus.connected ? 'Bridge connected.' : 'Waiting for bridge.')}
-                </div>
+                <div className="mt-1 text-[0.8rem] text-[var(--text)]">{bridgeSummary}</div>
               </div>
               <div className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)]/82 px-3 py-2.5">
                 <div className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
@@ -209,7 +215,9 @@ export function OverviewOperatorRail({
             <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface)]/82 px-4 py-3 text-[0.78rem] leading-6 text-[var(--text-muted)]">
               {sessionActive
                 ? 'There is an active session on the robot. Change the pickers freely if needed, then press Disable before a new Start.'
-                : 'Choose Teleoperado or Autonomo, confirm the automode when needed, then press Start to make the robot enter the selected session.'}
+                : robotLinkOnline
+                  ? 'Choose Teleoperado or Autonomo, confirm the automode when needed, then press Start to make the robot enter the selected session.'
+                  : 'Choose the session first if you want, then reconnect the robot link before pressing Start.'}
             </div>
           </div>
         </div>

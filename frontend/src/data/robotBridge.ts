@@ -5,9 +5,14 @@ import {
   adaptTelemetryCatalogPayload,
 } from './telemetryAdapters'
 import type {
+  BridgeConnectionCommand,
+  BridgeConnectionPreference,
+  BridgeConnectionResponse,
+  BridgeStatus,
   ControlModeFeed,
   OperatorCommand,
   RawBackendTelemetry,
+  RawBridgeConnectionPayload,
   RawRemoteDriverPayload,
   RawTelemetryCatalogPayload,
   RemoteDriverAction,
@@ -38,8 +43,35 @@ function resolveBridgeBaseUrl() {
   return `${window.location.protocol}//${window.location.hostname || '127.0.0.1'}:8765`
 }
 
-const BRIDGE_BASE_URL =
-  resolveBridgeBaseUrl()
+function createFallbackBridgeStatus(): BridgeStatus {
+  return {
+    transport: 'networktables',
+    chooserPath: 'SmartDashboard/Auto mode',
+    telemetryEndpoint: '/api/telemetry',
+    controlModeEndpoint: '/api/control-mode',
+    topicCatalogEndpoint: '/api/topics',
+    topicWriteEndpoint: '/api/topics/write',
+    remoteDriverEndpoint: '/api/remote-driver',
+    connected: false,
+    robotLinkConnected: false,
+    teamNumber: 0,
+    manualHost: null,
+    connectionPreference: 'team-auto',
+    message: 'Bridge status unavailable.',
+  }
+}
+
+function adaptBridgeConnectionPayload(payload: RawBridgeConnectionPayload): BridgeConnectionResponse {
+  return {
+    bridgeStatus: payload.bridgeStatus
+      ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
+      : createFallbackBridgeStatus(),
+    message: payload.message,
+    error: payload.error,
+  }
+}
+
+const BRIDGE_BASE_URL = resolveBridgeBaseUrl()
 
 const TELEMETRY_URL = `${BRIDGE_BASE_URL}/api/telemetry`
 const CONTROL_MODE_URL = `${BRIDGE_BASE_URL}/api/control-mode`
@@ -48,6 +80,7 @@ const TOPIC_WRITE_URL = `${BRIDGE_BASE_URL}/api/topics/write`
 const REMOTE_DRIVER_URL = `${BRIDGE_BASE_URL}/api/remote-driver`
 const REMOTE_DRIVER_STATE_URL = `${BRIDGE_BASE_URL}/api/remote-driver/state`
 const REMOTE_DRIVER_ACTION_URL = `${BRIDGE_BASE_URL}/api/remote-driver/action`
+const BRIDGE_CONNECTION_URL = `${BRIDGE_BASE_URL}/api/bridge/connection`
 
 export async function getTelemetrySnapshot(): Promise<TelemetrySnapshot> {
   const response = await fetch(TELEMETRY_URL, {
@@ -278,4 +311,39 @@ export async function requestControlModeChange(modeId: string): Promise<ControlM
   }
 
   return payload
+}
+
+export async function getBridgeConnectionStatus(): Promise<BridgeConnectionResponse> {
+  const response = await fetch(BRIDGE_CONNECTION_URL, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+
+  return adaptBridgeConnectionPayload((await response.json()) as RawBridgeConnectionPayload)
+}
+
+export async function updateBridgeConnection(
+  manualHost?: string | null,
+  connectionPreference?: BridgeConnectionPreference,
+  reconnect = true,
+): Promise<BridgeConnectionResponse> {
+  const command: BridgeConnectionCommand = {
+    type: 'update_bridge_connection',
+    payload: {
+      manualHost,
+      connectionPreference,
+      reconnect,
+    },
+  }
+
+  const response = await fetch(BRIDGE_CONNECTION_URL, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+  })
+
+  return adaptBridgeConnectionPayload((await response.json()) as RawBridgeConnectionPayload)
 }

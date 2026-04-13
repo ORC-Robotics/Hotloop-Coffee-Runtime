@@ -36,7 +36,7 @@ if (
   process.exit(0)
 }
 
-const { app, BrowserWindow, dialog, shell } = electronModule
+const { app, BrowserWindow, dialog, ipcMain, shell } = electronModule
 
 const APP_NAME = 'Hotloop'
 const APP_USER_MODEL_ID = 'com.orcrobotics.orionconsole'
@@ -52,6 +52,7 @@ let mainWindow = null
 let bridgeProcess = null
 let bridgeOwnedByApp = false
 let appIsQuitting = false
+let bridgeStartupPromise = null
 
 const singleInstanceLock = app.requestSingleInstanceLock()
 
@@ -212,12 +213,17 @@ async function waitForBridgeHealth(timeoutMs) {
   return false
 }
 
-async function startBridgeIfNeeded() {
+async function startBridgeIfNeededInternal() {
   logRuntime(`checking bridge health at ${BRIDGE_BASE_URL}`)
   if (await isBridgeHealthy()) {
     bridgeOwnedByApp = false
     logRuntime('bridge already healthy; reusing existing instance')
     return true
+  }
+
+  if (bridgeProcess && !bridgeProcess.killed) {
+    logRuntime('bridge process already running; waiting for health')
+    return waitForBridgeHealth(BRIDGE_STARTUP_TIMEOUT_MS)
   }
 
   const bridgeExecutablePath = resolveBridgeExecutablePath()
@@ -239,7 +245,7 @@ async function startBridgeIfNeeded() {
         ? 'O binario do telemetry bridge nao foi encontrado dentro do pacote desktop.'
         : 'Hotloop precisa de Python 3 instalado ou de um bridge standalone compilado para iniciar o telemetry bridge local.'
 
-      dialog.showErrorBox('Bridge indisponivel', message)
+      logRuntime(`bridge startup skipped: ${message}`)
       return false
     }
 
@@ -289,10 +295,6 @@ async function startBridgeIfNeeded() {
 
     startupErrorShown = true
     logRuntime(`bridge process error: ${error.message}`)
-    dialog.showErrorBox(
-      'Falha ao iniciar o telemetry bridge',
-      `Hotloop nao conseguiu iniciar o processo do bridge.\n\n${error.message}`,
-    )
   })
 
   bridgeProcess.once('exit', (code, signal) => {
@@ -309,7 +311,7 @@ async function startBridgeIfNeeded() {
       stderrBuffer.trim() ||
       `O telemetry bridge foi encerrado com codigo ${code ?? 'desconhecido'}${signal ? ` (${signal})` : ''}.`
 
-    dialog.showErrorBox('Telemetry bridge interrompido', summary)
+    logRuntime(`telemetry bridge interrupted: ${summary}`)
   })
 
   const bridgeReady = await waitForBridgeHealth(BRIDGE_STARTUP_TIMEOUT_MS)
@@ -317,14 +319,30 @@ async function startBridgeIfNeeded() {
 
   if (!bridgeReady && !appIsQuitting && !startupErrorShown) {
     startupErrorShown = true
-    dialog.showErrorBox(
-      'Bridge indisponivel',
-      stderrBuffer.trim() ||
-        'Hotloop abriu a interface, mas o telemetry bridge nao respondeu em tempo util.',
+    logRuntime(
+      `bridge not ready yet: ${
+        stderrBuffer.trim() || 'Hotloop interface will stay available while the backend retries.'
+      }`,
     )
   }
 
   return bridgeReady
+}
+
+async function startBridgeIfNeeded() {
+  if (bridgeStartupPromise) {
+    return bridgeStartupPromise
+  }
+
+  bridgeStartupPromise = (async () => {
+    try {
+      return await startBridgeIfNeededInternal()
+    } finally {
+      bridgeStartupPromise = null
+    }
+  })()
+
+  return bridgeStartupPromise
 }
 
 function stopOwnedBridge() {
@@ -341,6 +359,14 @@ function stopOwnedBridge() {
     }
   }, 1500).unref()
 }
+
+ipcMain.handle('orion:restart-bridge', async () => {
+  const ready = await startBridgeIfNeeded()
+  return {
+    ok: ready,
+    bridgeBaseUrl: BRIDGE_BASE_URL,
+  }
+})
 
 function createMainWindow() {
   logRuntime('creating main window')
@@ -417,7 +443,9 @@ app.on('before-quit', () => {
 app.whenReady().then(async () => {
   try {
     logRuntime('app ready')
-    await startBridgeIfNeeded()
+    void startBridgeIfNeeded().catch((error) => {
+      logRuntime(`background bridge startup failed: ${error.stack ?? error.message ?? String(error)}`)
+    })
     mainWindow = createMainWindow()
 
     app.on('activate', () => {
