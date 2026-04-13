@@ -2,6 +2,22 @@
 
 Todas as mudancas relevantes deste projeto sao registradas aqui.
 
+## [0.3.3] - 2026-04-13
+
+### Added
+- shared telemetry topic browser between the telemetry catalog and the Overview widget builder
+- preset workspace widgets for battery watch, heading/gyro, systems health, commands, and alerts on the Overview whiteboard
+
+### Changed
+- kept remote teleop alive while navigating across dashboard pages instead of tying the session to the Overview rail lifecycle
+- updated the Windows launcher to prefer the active PowerShell `node` and `npm` commands before probing fragile WinGet installation folders
+- improved manual bridge host handling so `.local` aliases such as `raspberrypi.local` can resolve to reachable addresses before NetworkTables connects
+
+### Fixed
+- removed the Hotloop-side second-step friction from autonomous start requests so the dashboard now publishes the selected start command in one flow
+- improved manual host reconnect behavior so the bridge keeps retrying manual hostname targets instead of treating them as a one-shot route
+- refreshed release metadata and desktop versioning for `v0.3.3`
+
 ## [0.2.0] - 2026-04-10
 
 ### Added

@@ -62,6 +62,34 @@ def team_to_ip_prefix(team: int) -> str:
     return f"10.{team // 100}.{team % 100}"
 
 
+def dedupe_hosts(hosts: list[str]) -> list[str]:
+    deduped = []
+    seen = set()
+    for host in hosts:
+        if host not in seen:
+            seen.add(host)
+            deduped.append(host)
+    return deduped
+
+
+def expand_host_aliases(host: str, port: int = NT_PORT) -> list[str]:
+    normalized_host = str(host).strip()
+    if not normalized_host:
+        return []
+
+    aliases = [normalized_host]
+
+    try:
+        for result in socket.getaddrinfo(normalized_host, port, type=socket.SOCK_STREAM):
+            resolved_host = str(result[4][0]).strip()
+            if resolved_host:
+                aliases.append(resolved_host)
+    except OSError:
+        pass
+
+    return dedupe_hosts(aliases)
+
+
 def candidate_hosts(team: int, manual_host: str | None = None) -> list[str]:
     prefix = team_to_ip_prefix(team)
     hosts: list[str] = []
@@ -69,7 +97,7 @@ def candidate_hosts(team: int, manual_host: str | None = None) -> list[str]:
     if manual_host is None:
         manual_host = os.getenv("ROBOT_HOST")
     if manual_host:
-        hosts.append(manual_host)
+        hosts.extend(expand_host_aliases(manual_host))
 
     hosts.extend(
         [
@@ -82,13 +110,7 @@ def candidate_hosts(team: int, manual_host: str | None = None) -> list[str]:
         ]
     )
 
-    deduped = []
-    seen = set()
-    for host in hosts:
-        if host not in seen:
-            seen.add(host)
-            deduped.append(host)
-    return deduped
+    return dedupe_hosts(hosts)
 
 
 def first_reachable_host(
@@ -153,11 +175,13 @@ class NTClient:
 
         if self.connection_preference == "manual-host" and self.manual_host:
             start_client = getattr(self.inst, "startClient", None)
+            host_candidates = expand_host_aliases(self.manual_host)
+            target_host = first_reachable_host(host_candidates) or host_candidates[0]
             self.connection_mode = "manual-fallback"
             self.connection_target = self.manual_host
-            self.connected_host = self.manual_host
+            self.connected_host = target_host
             if callable(start_client):
-                start_client(self.manual_host)
+                start_client(target_host)
             return
 
         hosts = candidate_hosts(self.team)
@@ -229,8 +253,7 @@ class NTClient:
                 if not connected:
                     with self._lock:
                         if self.connection_preference == "manual-host" and self.manual_host:
-                            if self.connection_target != self.manual_host:
-                                self.connection_target = self.manual_host
+                            self.connection_target = self.manual_host
                             self._start_client_locked()
                         elif self.connection_mode == "manual-fallback":
                             host = first_reachable_host(candidate_hosts(self.team))
@@ -239,7 +262,8 @@ class NTClient:
                                 self._start_client_locked()
                 else:
                     if self.connection_preference == "manual-host" and self.manual_host:
-                        self.connected_host = self.manual_host
+                        host_candidates = expand_host_aliases(self.manual_host)
+                        self.connected_host = first_reachable_host(host_candidates) or self.manual_host
                     else:
                         reachable = first_reachable_host(candidate_hosts(self.team))
                         if reachable:

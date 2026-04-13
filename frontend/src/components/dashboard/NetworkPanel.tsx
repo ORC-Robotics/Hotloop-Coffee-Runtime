@@ -149,7 +149,7 @@ export function NetworkPanel({ data, tone, bridgeStatus, controlMode }: NetworkP
             Bridge control
           </div>
           <div className="mt-2 text-[0.8rem] leading-6 text-[var(--text-muted)]">
-            Hotloop keeps the bridge alive in the background. Use reconnect to refresh the robot link, or set a manual host/IP when you do not want to rely on the default discovery route.
+            Hotloop keeps the bridge alive in the background. Use reconnect to refresh the robot link, or set a manual host/IP such as an address, `roborio-1234-frc.local`, or `raspberrypi.local` when you do not want to rely on the default discovery route.
           </div>
 
           <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
@@ -160,7 +160,7 @@ export function NetworkPanel({ data, tone, bridgeStatus, controlMode }: NetworkP
               <input
                 value={manualHostInput}
                 onChange={(event) => setManualHostInput(event.target.value)}
-                placeholder="10.12.34.11 or roborio-1234-frc.local"
+                placeholder="10.12.34.11, roborio-1234-frc.local or raspberrypi.local"
                 className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)]/82 px-3 py-2.5 text-[0.82rem] text-[var(--text)] outline-none transition-colors focus:border-[var(--primary)]"
               />
             </label>
