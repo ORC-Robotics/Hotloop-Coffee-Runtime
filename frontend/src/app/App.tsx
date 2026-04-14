@@ -19,6 +19,7 @@ import {
   SecondaryWorkspaceBar,
   type SecondaryWorkspaceId,
 } from '../components/dashboard/SecondaryWorkspaceBar'
+import { SpatialWorkspace } from '../components/dashboard/SpatialWorkspace'
 import { StatusBadge } from '../components/dashboard/StatusBadge'
 import { SystemsHealthPanel } from '../components/dashboard/SystemsHealthPanel'
 import { TelemetryModeToggle } from '../components/dashboard/TelemetryModeToggle'
@@ -270,7 +271,9 @@ export default function App() {
           : debugMain
 
   const main =
-    activeWorkspace === 'custom-telemetry'
+    activeWorkspace === 'spatial-view'
+      ? <SpatialWorkspace snapshot={snapshot} />
+      : activeWorkspace === 'custom-telemetry'
       ? <CustomTelemetryWorkspace />
       : activeWorkspace === 'camera-wall'
         ? <CameraWallWorkspace feeds={resolvedCameraFeeds} />

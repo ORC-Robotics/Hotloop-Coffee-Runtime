@@ -42,6 +42,14 @@ REMOTE_DRIVER_ACTIONS = {
 }
 REMOTE_DRIVER_SESSION_MODES = {"teleop", "autonomous"}
 BRIDGE_CONNECTION_PREFERENCES = {"team-auto", "manual-host"}
+POSE_SOURCE_DEFAULT_FRAMES = {
+    "odometry": "odometry_local",
+    "reactive": "reactive_local",
+    "mapeamento": "mapeamento_local",
+    "simulation": "simulation_local",
+    "none": "none",
+}
+POSE_SOURCE_STALE_AFTER_MS = 1000
 
 
 def utc_now() -> datetime:
@@ -635,6 +643,19 @@ class TelemetryBridge:
         self.client = NTClient(team)
         self.control_mode = ControlModeManager(self.client)
         self.remote_driver = RemoteDriverManager(self.client)
+        self.pose_source_state: dict[str, dict[str, Any]] = {
+            source: {
+                "available": False,
+                "xMm": 0.0,
+                "yMm": 0.0,
+                "yawDeg": 0.0,
+                "timestampMs": 0,
+                "sequence": 0,
+                "frame": POSE_SOURCE_DEFAULT_FRAMES[source],
+                "signature": None,
+            }
+            for source in ("odometry", "reactive", "mapeamento", "simulation")
+        }
 
     def _preferred_camera_host(self) -> str | None:
         host_candidates = [
@@ -734,12 +755,85 @@ class TelemetryBridge:
                 return self.client.get_string(key, default)
         return default
 
+    def _invalid_pose(self, source: str) -> dict[str, Any]:
+        return {
+            "available": False,
+            "source": source,
+            "xMm": 0.0,
+            "yMm": 0.0,
+            "yawDeg": 0.0,
+            "timestampMs": 0,
+            "sequence": 0,
+            "freshness": "invalid",
+            "frame": POSE_SOURCE_DEFAULT_FRAMES.get(source, "none"),
+        }
+
+    def _observe_pose_source(
+        self,
+        source: str,
+        timestamp_ms: int,
+        currently_available: bool,
+        x_mm: float = 0.0,
+        y_mm: float = 0.0,
+        yaw_deg: float = 0.0,
+        frame: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.pose_source_state[source]
+        resolved_frame = frame or state.get("frame") or POSE_SOURCE_DEFAULT_FRAMES.get(source, "none")
+
+        if currently_available:
+            signature = (
+                round(float(x_mm), 3),
+                round(float(y_mm), 3),
+                round(float(yaw_deg), 3),
+                resolved_frame,
+            )
+            if state.get("signature") != signature:
+                state["sequence"] = int(state.get("sequence", 0)) + 1
+                state["signature"] = signature
+                state["timestampMs"] = int(timestamp_ms)
+
+            state["available"] = True
+            state["xMm"] = float(x_mm)
+            state["yMm"] = float(y_mm)
+            state["yawDeg"] = float(yaw_deg)
+            state["frame"] = resolved_frame
+            age_ms = max(0, int(timestamp_ms) - int(state.get("timestampMs", 0)))
+            freshness = "live" if age_ms <= POSE_SOURCE_STALE_AFTER_MS else "stale"
+
+            return {
+                "available": True,
+                "source": source,
+                "xMm": state["xMm"],
+                "yMm": state["yMm"],
+                "yawDeg": state["yawDeg"],
+                "timestampMs": state["timestampMs"],
+                "sequence": state["sequence"],
+                "freshness": freshness,
+                "frame": state["frame"],
+            }
+
+        if state.get("signature") is not None:
+            return {
+                "available": True,
+                "source": source,
+                "xMm": state["xMm"],
+                "yMm": state["yMm"],
+                "yawDeg": state["yawDeg"],
+                "timestampMs": int(state.get("timestampMs", 0)),
+                "sequence": int(state.get("sequence", 0)),
+                "freshness": "stale",
+                "frame": str(state.get("frame") or resolved_frame),
+            }
+
+        return self._invalid_pose(source)
+
     def bridge_status(self) -> dict[str, Any]:
         control_state = self.control_mode.payload()
         connection_settings = self.client.get_connection_settings()
         discovered_camera_feeds = self.discovered_camera_feeds()
         return {
-            "bridgeApiVersion": 2,
+            "bridgeApiVersion": 3,
             "transport": "networktables",
             "chooserPath": f"SmartDashboard/{AUTO_MODE_CHOOSER_PATH}",
             "telemetryEndpoint": "/api/telemetry",
@@ -908,6 +1002,10 @@ class TelemetryBridge:
         elif online and connected_host == "unknown":
             connected_host = self.client.connection_target
 
+        timestamp = utc_now()
+        timestamp_iso = timestamp.isoformat()
+        timestamp_ms = int(timestamp.timestamp() * 1000)
+
         battery_voltage = self._get_number_alias("Telemetry/Robot/Battery Voltage", default=0.0)
         battery_current = self._get_number_alias("Telemetry/Robot/Battery Current", default=0.0)
         battery_power = battery_voltage * battery_current
@@ -936,10 +1034,88 @@ class TelemetryBridge:
             target_yaw_deg = live_yaw_deg
             angular_error_deg = 0.0
 
+        command_center = self._get_number_alias("Telemetry/Reactive/Center Command", default=0.0)
+        command_forward = self._get_number_alias("Telemetry/Reactive/Forward Command", default=0.0)
+        command_rotation = self._get_number_alias("Telemetry/Reactive/Rotation Command", default=0.0)
+        reactive_state_time_sec = self._get_number_alias("Telemetry/Reactive/State Time (s)", default=0.0)
+
+        odometry_available = online and self._get_bool_alias("Telemetry/Odometry/Available", default=False)
+        odometry_pose_x_mm = self._get_number_alias("Telemetry/Odometry/Pose X (mm)", default=0.0)
+        odometry_pose_y_mm = self._get_number_alias("Telemetry/Odometry/Pose Y (mm)", default=0.0)
+        odometry_pose_heading_deg = self._get_number_alias("Telemetry/Odometry/Pose Heading (deg)", default=0.0)
+        odometry_pose_frame = self._get_string_alias(
+            "Telemetry/Odometry/Pose Frame",
+            default=POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+        )
+
+        reactive_pose_x_mm = self._get_number_alias("Telemetry/Reactive/Pose X (mm)", default=0.0)
+        reactive_pose_y_mm = self._get_number_alias("Telemetry/Reactive/Pose Y (mm)", default=0.0)
+        reactive_pose_heading_deg = self._get_number_alias("Telemetry/Reactive/Pose Heading (deg)", default=0.0)
+        reactive_pose_active = online and (
+            reactive_state_time_sec > 0.0
+            or abs(reactive_pose_x_mm) >= 1.0
+            or abs(reactive_pose_y_mm) >= 1.0
+            or abs(reactive_pose_heading_deg) >= 0.5
+            or abs(command_center) >= 0.05
+            or abs(command_forward) >= 0.05
+            or abs(command_rotation) >= 0.05
+        )
+
+        mapeamento_active = online and self._get_bool_alias("Telemetry/Mapeamento/Active", default=False)
+        mapeamento_pose_x_mm = self._get_number_alias("Telemetry/Mapeamento/Pose X (mm)", default=0.0)
+        mapeamento_pose_y_mm = self._get_number_alias("Telemetry/Mapeamento/Pose Y (mm)", default=0.0)
+        mapeamento_pose_heading_deg = self._get_number_alias("Telemetry/Mapeamento/Pose Heading (deg)", default=0.0)
+
+        pose_sources = {
+            "odometry": self._observe_pose_source(
+                "odometry",
+                timestamp_ms,
+                odometry_available,
+                odometry_pose_x_mm,
+                odometry_pose_y_mm,
+                odometry_pose_heading_deg,
+                odometry_pose_frame or POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+            ),
+            "reactive": self._observe_pose_source(
+                "reactive",
+                timestamp_ms,
+                reactive_pose_active,
+                reactive_pose_x_mm,
+                reactive_pose_y_mm,
+                reactive_pose_heading_deg,
+                POSE_SOURCE_DEFAULT_FRAMES["reactive"],
+            ),
+            "mapeamento": self._observe_pose_source(
+                "mapeamento",
+                timestamp_ms,
+                mapeamento_active,
+                mapeamento_pose_x_mm,
+                mapeamento_pose_y_mm,
+                mapeamento_pose_heading_deg,
+                POSE_SOURCE_DEFAULT_FRAMES["mapeamento"],
+            ),
+            "simulation": self._invalid_pose("simulation"),
+        }
+
+        if online:
+            auto_pose = (
+                pose_sources["odometry"]
+                if pose_sources["odometry"]["available"]
+                else pose_sources["reactive"]
+                if pose_sources["reactive"]["available"]
+                else pose_sources["mapeamento"]
+                if pose_sources["mapeamento"]["available"]
+                else self._invalid_pose("none")
+            )
+        else:
+            auto_pose = self._invalid_pose("none")
+
         return {
-            "timestamp": iso_now(),
+            "timestamp": timestamp_iso,
             "scenarioLabel": "live robot telemetry" if online else "live standby",
             "bridgeStatus": self.bridge_status(),
+            "pose": auto_pose,
+            "poseSources": pose_sources,
             "connection": {
                 "online": online,
                 "team": self.client.team,
@@ -968,9 +1144,9 @@ class TelemetryBridge:
                 "deadEnd": self._get_bool_alias("Telemetry/Reactive/Dead End", default=False),
             },
             "commands": {
-                "center": self._get_number_alias("Telemetry/Reactive/Center Command", default=0.0),
-                "forward": self._get_number_alias("Telemetry/Reactive/Forward Command", default=0.0),
-                "rotation": self._get_number_alias("Telemetry/Reactive/Rotation Command", default=0.0),
+                "center": command_center,
+                "forward": command_forward,
+                "rotation": command_rotation,
             },
             "encoders": {
                 "leftMm": self._get_number_alias("Telemetry/Drive/Encoder Left (mm)", default=0.0),
@@ -1004,7 +1180,7 @@ class TelemetryBridge:
                     default="No drive command stream available.",
                 ),
                 "lastTurn": self._get_string_alias("Debug/Reactive/Last Turn", default="none"),
-                "stateTimeSec": self._get_number_alias("Telemetry/Reactive/State Time (s)", default=0.0),
+                "stateTimeSec": reactive_state_time_sec,
                 "stableScans": self._get_number_alias(
                     "Telemetry/Reactive/Stable Scan Cycles",
                     default=0.0,

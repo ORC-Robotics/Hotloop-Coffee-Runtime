@@ -1,6 +1,6 @@
 import { cn } from '../../lib/cn'
 
-export type SecondaryWorkspaceId = 'custom-telemetry' | 'camera-wall'
+export type SecondaryWorkspaceId = 'custom-telemetry' | 'camera-wall' | 'spatial-view'
 
 interface SecondaryWorkspaceBarProps {
   open: boolean
@@ -15,6 +15,11 @@ const workspaces: Array<{
   label: string
   hint: string
 }> = [
+  {
+    id: 'spatial-view',
+    label: 'Spatial View',
+    hint: 'validate planar odometry, kiwi strafing and yaw coherence in a dedicated 2D viewer',
+  },
   {
     id: 'custom-telemetry',
     label: 'Custom Telemetry',
@@ -45,7 +50,7 @@ export function SecondaryWorkspaceBar({
             Keep the main pages focused and open only the extra telemetry surfaces when needed.
           </div>
           <div className="mt-1 text-[0.8rem] leading-6 text-[var(--text-muted)]">
-            The home rail now owns remote operation. This bar stays reserved for raw telemetry exploration and dedicated camera walls.
+            The home rail now owns remote operation. This bar stays reserved for specialized tooling such as planar spatial validation, raw telemetry exploration and dedicated camera walls.
           </div>
         </div>
 

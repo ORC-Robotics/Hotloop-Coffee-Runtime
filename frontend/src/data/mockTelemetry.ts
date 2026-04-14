@@ -1,7 +1,11 @@
 import type {
   ConnectionStatus,
   MockScenarioId,
+  PlanarPoseData,
+  PlanarPoseFreshness,
+  PlanarPoseSource,
   TelemetrySnapshot,
+  TelemetryPoseSources,
 } from '../types/telemetry'
 import { clamp } from '../lib/format'
 
@@ -25,6 +29,44 @@ const BATTERY_ESTIMATE_FULL_V = 12.6
 const BATTERY_ESTIMATE_EMPTY_V = 11.1
 const BATTERY_IDLE_DRAW_FLOOR_A = 8
 const BATTERY_ACTIVE_DRAW_FLOOR_A = 22
+
+export function createPlanarPoseData(
+  source: PlanarPoseSource,
+  overrides: Partial<PlanarPoseData> = {},
+): PlanarPoseData {
+  const defaultFrame =
+    source === 'odometry'
+      ? 'odometry_local'
+      : source === 'reactive'
+        ? 'reactive_local'
+        : source === 'mapeamento'
+          ? 'mapeamento_local'
+          : source === 'simulation'
+            ? 'simulation_local'
+            : 'none'
+
+  return {
+    available: source !== 'none',
+    source,
+    xMm: 0,
+    yMm: 0,
+    yawDeg: 0,
+    timestampMs: 0,
+    sequence: 0,
+    freshness: (source === 'none' ? 'invalid' : 'stale') satisfies PlanarPoseFreshness,
+    frame: defaultFrame,
+    ...overrides,
+  }
+}
+
+export function createDefaultPoseSources(): TelemetryPoseSources {
+  return {
+    odometry: createPlanarPoseData('odometry', { available: false, freshness: 'invalid' }),
+    reactive: createPlanarPoseData('reactive', { available: false, freshness: 'invalid' }),
+    mapeamento: createPlanarPoseData('mapeamento', { available: false, freshness: 'invalid' }),
+    simulation: createPlanarPoseData('simulation', { available: false, freshness: 'invalid' }),
+  }
+}
 
 function estimateBatteryRuntimeMinutes(voltageV: number, currentA: number, robotEnabled: boolean) {
   if (voltageV <= 0) {
@@ -54,6 +96,8 @@ export function createBaseSnapshot(): TelemetrySnapshot {
     timestamp: new Date().toISOString(),
     scenarioId: 'corridor-cruise',
     scenarioLabel: 'Corridor cruise',
+    pose: createPlanarPoseData('none', { available: false, freshness: 'invalid' }),
+    poseSources: createDefaultPoseSources(),
     connection: {
       online: true,
       team: 1234,
@@ -125,6 +169,8 @@ export function createOfflineSnapshot(): TelemetrySnapshot {
     timestamp: new Date().toISOString(),
     scenarioId: 'corridor-cruise',
     scenarioLabel: 'live standby',
+    pose: createPlanarPoseData('none', { available: false, freshness: 'invalid' }),
+    poseSources: createDefaultPoseSources(),
     connection: {
       online: false,
       team: 1234,

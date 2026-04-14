@@ -1,11 +1,12 @@
 import { clamp } from '../lib/format'
-import { generateMockTelemetryFrame } from './mockTelemetry'
+import { createDefaultPoseSources, createPlanarPoseData, generateMockTelemetryFrame } from './mockTelemetry'
 import type {
   BridgeConnectionPreference,
   BridgeConnectionResponse,
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
+  PlanarPoseData,
   RemoteDriverAction,
   RemoteDriverFeed,
   RemoteDriverResponse,
@@ -39,6 +40,14 @@ type DriveInputState = {
   source: string
 }
 
+type SimulationPoseState = {
+  xMm: number
+  yMm: number
+  yawDeg: number
+  sequence: number
+  lastUpdateMs: number | null
+}
+
 type TelemetryListener = (snapshot: TelemetrySnapshot) => void
 type CatalogListener = (catalog: TelemetryCatalogFeed) => void
 
@@ -62,6 +71,23 @@ const simulatedModes = [
     isAvailable: true,
   },
 ] as const
+
+const SIM_TRANSLATION_SPEED_MM_PER_SEC = 640
+const SIM_MAX_FRAME_DELTA_SEC = 0.24
+
+function normalizeAngle(angleDeg: number) {
+  let next = angleDeg
+
+  while (next > 180) {
+    next -= 360
+  }
+
+  while (next < -180) {
+    next += 360
+  }
+
+  return next
+}
 
 function nowIso(timestampMs = Date.now()) {
   return new Date(timestampMs).toISOString()
@@ -241,10 +267,27 @@ class SimulationEngine {
   private bridgeStatus = createSimulationBridgeStatus(nowIso())
   private controlMode = createSimulationControlMode(nowIso())
   private remoteDriver = createSimulationRemoteDriver()
+  private poseState: SimulationPoseState = {
+    xMm: 0,
+    yMm: 0,
+    yawDeg: 0,
+    sequence: 0,
+    lastUpdateMs: null,
+  }
   private snapshot = this.composeSnapshot(Date.now())
   private telemetryListeners = new Set<TelemetryListener>()
   private catalogListeners = new Set<CatalogListener>()
   private intervalId: number | null = null
+
+  private resetPoseState() {
+    this.poseState = {
+      xMm: 0,
+      yMm: 0,
+      yawDeg: 0,
+      sequence: 0,
+      lastUpdateMs: null,
+    }
+  }
 
   private ensureClock() {
     if (this.intervalId !== null) {
@@ -322,6 +365,58 @@ class SimulationEngine {
     return this.remoteActionMessage
   }
 
+  private advanceSimulationPose(snapshot: TelemetrySnapshot, timestampMs: number): PlanarPoseData {
+    const headingDeg = normalizeAngle(snapshot.heading.yawDeg)
+
+    if (this.poseState.lastUpdateMs === null) {
+      this.poseState = {
+        ...this.poseState,
+        yawDeg: headingDeg,
+        lastUpdateMs: timestampMs,
+      }
+    } else {
+      const deltaSec = Math.min(
+        SIM_MAX_FRAME_DELTA_SEC,
+        Math.max(0, (timestampMs - this.poseState.lastUpdateMs) / 1000),
+      )
+      const headingRad = (headingDeg * Math.PI) / 180
+      const deltaForwardMm = snapshot.commands.forward * SIM_TRANSLATION_SPEED_MM_PER_SEC * deltaSec
+      const deltaStrafeMm = snapshot.commands.center * SIM_TRANSLATION_SPEED_MM_PER_SEC * deltaSec
+      const deltaYawDeg = normalizeAngle(headingDeg - this.poseState.yawDeg)
+
+      const nextXMm =
+        this.poseState.xMm +
+        deltaStrafeMm * Math.cos(headingRad) +
+        deltaForwardMm * Math.sin(headingRad)
+      const nextYMm =
+        this.poseState.yMm +
+        deltaForwardMm * Math.cos(headingRad) -
+        deltaStrafeMm * Math.sin(headingRad)
+      const movedEnough =
+        Math.hypot(nextXMm - this.poseState.xMm, nextYMm - this.poseState.yMm) >= 2 ||
+        Math.abs(deltaYawDeg) >= 0.5
+
+      this.poseState = {
+        xMm: nextXMm,
+        yMm: nextYMm,
+        yawDeg: headingDeg,
+        sequence: movedEnough ? this.poseState.sequence + 1 : this.poseState.sequence,
+        lastUpdateMs: timestampMs,
+      }
+    }
+
+    return createPlanarPoseData('simulation', {
+      available: true,
+      xMm: this.poseState.xMm,
+      yMm: this.poseState.yMm,
+      yawDeg: this.poseState.yawDeg,
+      timestampMs,
+      sequence: this.poseState.sequence,
+      freshness: 'live',
+      frame: 'simulation_local',
+    })
+  }
+
   private composeSnapshot(timestampMs: number) {
     const base = generateMockTelemetryFrame(timestampMs)
     const timestamp = nowIso(timestampMs)
@@ -383,6 +478,13 @@ class SimulationEngine {
       base.reactive.decision = `Simulation autonomous routine following ${targetLabel}.`
     }
 
+    const simulationPose = this.advanceSimulationPose(base, timestampMs)
+    base.poseSources = {
+      ...createDefaultPoseSources(),
+      simulation: simulationPose,
+    }
+    base.pose = simulationPose
+
     return base
   }
 
@@ -407,6 +509,12 @@ class SimulationEngine {
       createTopic('/robot/control/center', 'Center Command', 'telemetry', this.snapshot.commands.center),
       createTopic('/robot/control/forward', 'Forward Command', 'telemetry', this.snapshot.commands.forward),
       createTopic('/robot/control/rotation', 'Rotation Command', 'telemetry', this.snapshot.commands.rotation),
+      createTopic('/robot/odometry/available', 'Odometry Available', 'telemetry', this.snapshot.pose.available),
+      createTopic('/robot/odometry/pose_x_mm', 'Pose X', 'telemetry', this.snapshot.pose.xMm),
+      createTopic('/robot/odometry/pose_y_mm', 'Pose Y', 'telemetry', this.snapshot.pose.yMm),
+      createTopic('/robot/odometry/pose_heading_deg', 'Pose Heading', 'telemetry', this.snapshot.pose.yawDeg),
+      createTopic('/robot/odometry/pose_sequence', 'Pose Sequence', 'debug', this.snapshot.pose.sequence),
+      createTopic('/robot/odometry/pose_frame', 'Pose Frame', 'debug', this.snapshot.pose.frame),
       createTopic('/robot/control/mode', 'Control Mode', 'config', this.remoteDriver.mode),
       createTopic('/robot/reactive/state', 'Reactive State', 'telemetry', this.snapshot.reactive.state),
       createTopic('/robot/reactive/stable_scans', 'Stable Scans', 'debug', this.snapshot.reactive.stableScans),
@@ -628,6 +736,7 @@ class SimulationEngine {
     this.lastActionTimestampMs = now
 
     if (action === 'start' && sessionMode === 'teleop') {
+      this.resetPoseState()
       this.remoteDriver = {
         ...this.remoteDriver,
         active: true,
@@ -648,6 +757,7 @@ class SimulationEngine {
       this.lastPacketTimestampMs = now
       this.remoteActionMessage = 'Simulation teleop started. Waiting for keyboard or joystick input.'
     } else if (action === 'start' && sessionMode === 'autonomous') {
+      this.resetPoseState()
       this.remoteDriver = {
         ...this.remoteDriver,
         active: true,
@@ -685,6 +795,7 @@ class SimulationEngine {
       this.lastPacketTimestampMs = null
       this.remoteActionMessage = 'Simulation driver disabled.'
     } else if (action === 'reset') {
+      this.resetPoseState()
       this.driveInput = {
         ...this.driveInput,
         x: 0,

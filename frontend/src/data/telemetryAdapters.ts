@@ -3,6 +3,8 @@ import type {
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
+  PlanarPoseData,
+  PlanarPoseSource,
   RawRemoteDriverPayload,
   RawBackendTelemetry,
   RawTelemetryCatalogPayload,
@@ -15,7 +17,7 @@ import type {
   TelemetryTopic,
   TelemetryTopicScope,
 } from '../types/telemetry'
-import { createBaseSnapshot } from './mockTelemetry'
+import { createBaseSnapshot, createDefaultPoseSources, createPlanarPoseData } from './mockTelemetry'
 
 function createFallbackControlMode(): ControlModeState {
   return {
@@ -84,6 +86,47 @@ function createFallbackRemoteDriver(): RemoteDriverStatus {
   }
 }
 
+function createFallbackPose(source: PlanarPoseSource): PlanarPoseData {
+  return createPlanarPoseData(source, {
+    available: false,
+    freshness: 'invalid',
+  })
+}
+
+function normalizePoseData(
+  source: PlanarPoseSource,
+  payload?: Partial<PlanarPoseData>,
+): PlanarPoseData {
+  return {
+    ...createFallbackPose(source),
+    ...(payload ?? {}),
+    source,
+  }
+}
+
+function normalizeAutoPose(payload?: Partial<PlanarPoseData>): PlanarPoseData {
+  const source = payload?.source ?? 'none'
+  return {
+    ...createPlanarPoseData(source, {
+      available: false,
+      freshness: 'invalid',
+    }),
+    ...(payload ?? {}),
+    source,
+  }
+}
+
+function normalizePoseSources(payload?: RawBackendTelemetry['poseSources']) {
+  const defaults = createDefaultPoseSources()
+
+  return {
+    odometry: normalizePoseData('odometry', payload?.odometry ?? defaults.odometry),
+    reactive: normalizePoseData('reactive', payload?.reactive ?? defaults.reactive),
+    mapeamento: normalizePoseData('mapeamento', payload?.mapeamento ?? defaults.mapeamento),
+    simulation: normalizePoseData('simulation', payload?.simulation ?? defaults.simulation),
+  }
+}
+
 export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySnapshot {
   const base = createBaseSnapshot()
 
@@ -91,6 +134,8 @@ export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySn
     ...base,
     timestamp: payload.timestamp ?? base.timestamp,
     scenarioLabel: payload.scenarioLabel ?? base.scenarioLabel,
+    pose: normalizeAutoPose(payload.pose),
+    poseSources: normalizePoseSources(payload.poseSources),
     bridgeStatus: payload.bridgeStatus
       ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
       : createFallbackBridgeStatus(),

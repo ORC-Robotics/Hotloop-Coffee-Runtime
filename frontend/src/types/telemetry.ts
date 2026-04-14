@@ -27,6 +27,10 @@ export type RemoteDriverAction =
   | 'disable'
   | 'reset'
   | 'estop'
+export type PlanarPoseSource = 'odometry' | 'reactive' | 'mapeamento' | 'simulation' | 'none'
+export type PlanarPoseFreshness = 'live' | 'stale' | 'invalid'
+export type PoseSourceOverride = 'auto' | 'odometry' | 'reactive' | 'mapeamento' | 'simulation'
+export type TelemetryPoseSourceKey = Exclude<PlanarPoseSource, 'none'>
 export type MockScenarioId =
   | 'corridor-cruise'
   | 'front-obstacle'
@@ -96,6 +100,25 @@ export interface BatteryData {
 export interface BatteryHistoryPoint {
   timestamp: string
   voltageV: number
+}
+
+export interface PlanarPoseData {
+  available: boolean
+  source: PlanarPoseSource
+  xMm: number
+  yMm: number
+  yawDeg: number
+  timestampMs: number
+  sequence: number
+  freshness: PlanarPoseFreshness
+  frame: string
+}
+
+export interface TelemetryPoseSources {
+  odometry: PlanarPoseData
+  reactive: PlanarPoseData
+  mapeamento: PlanarPoseData
+  simulation: PlanarPoseData
 }
 
 export interface ReactiveStateData {
@@ -285,6 +308,8 @@ export interface TelemetrySnapshot {
   scenarioLabel: string
   bridgeStatus?: BridgeStatus
   controlMode?: ControlModeState
+  pose: PlanarPoseData
+  poseSources: TelemetryPoseSources
   connection: ConnectionStatus
   heading: HeadingData
   perception: PerceptionData
@@ -349,6 +374,8 @@ export interface RawBackendTelemetry {
   scenarioLabel?: string
   bridgeStatus?: Partial<BridgeStatus>
   controlMode?: Partial<ControlModeState>
+  pose?: Partial<PlanarPoseData>
+  poseSources?: Partial<Record<TelemetryPoseSourceKey, Partial<PlanarPoseData>>>
   connection?: Partial<ConnectionStatus>
   heading?: Partial<HeadingData>
   perception?: Partial<PerceptionData>

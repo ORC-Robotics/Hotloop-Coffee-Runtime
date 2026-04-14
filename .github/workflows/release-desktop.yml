@@ -59,6 +59,19 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Validate tag version matches frontend package version
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: frontend
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Git tag version v$TAG_VERSION does not match frontend/package.json version $PACKAGE_VERSION"
+            exit 1
+          fi
+
       - name: Build desktop packages
         working-directory: frontend
         run: npm run build:desktop

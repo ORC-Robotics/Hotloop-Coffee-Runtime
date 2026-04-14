@@ -2,6 +2,17 @@
 
 Todas as mudancas relevantes deste projeto sao registradas aqui.
 
+## [0.3.5] - Unreleased
+
+## [0.3.4] - 2026-04-13
+
+### Changed
+- threaded discovered camera feeds through the bridge, app shell, and dashboard camera surfaces so configured views resolve live endpoints more reliably
+
+### Fixed
+- repaired camera feed handling across the desktop runtime, telemetry bridge, and local launch scripts
+- corrected embedded release metadata and package versioning so the published desktop artifacts now align with `v0.3.4`
+
 ## [0.3.3] - 2026-04-13
 
 ### Added
