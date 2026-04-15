@@ -9,22 +9,51 @@ import {
 } from 'react'
 import { clamp } from '../../lib/format'
 import { cn } from '../../lib/cn'
-import { type ResolvedSpatialPose } from '../../lib/spatialTelemetry'
+import {
+  decodeSpatialLidarPoints,
+  formatPoseAgeLabel,
+  type SpatialScanRegistration,
+  type ResolvedSpatialLidar,
+  type ResolvedSpatialPose,
+} from '../../lib/spatialTelemetry'
 import type {
+  SpatialGoalPreview,
+  SpatialOccupancyDisplayMode,
+  SpatialOccupancyLayer,
+  SpatialBufferedLidarScan,
+  SpatialObservedMapScan,
   SpatialPoseTransitionState,
+  SpatialReplaySelection,
   SpatialTrailPoint,
   SpatialViewportState,
 } from '../../hooks/useSpatialViewModel'
 import {
+  type PlanarSceneBufferedLidar,
   drawPlanarScene,
+  type PlanarSceneGoalPreview,
+  type PlanarSceneLidar,
+  type PlanarSceneOccupancyLayer,
+  type PlanarSceneObservedMap,
   type PlanarScenePalette,
   type PlanarScenePose,
+  type PlanarSceneRegistration,
 } from './planarSceneRenderer'
 
 interface PlanarViewerCanvasProps {
   poseSelection: ResolvedSpatialPose
+  lidarSelection: ResolvedSpatialLidar
+  scanRegistration: SpatialScanRegistration
   poseTransition: SpatialPoseTransitionState
   trail: SpatialTrailPoint[]
+  lidarHistory: SpatialBufferedLidarScan[]
+  observedMapScans: SpatialObservedMapScan[]
+  observedMapFadeOlderScans: boolean
+  observedMapFrozen: boolean
+  occupancyLayer: SpatialOccupancyLayer | null
+  showOccupancyLayer: boolean
+  occupancyDisplayMode: SpatialOccupancyDisplayMode
+  goalPreview: SpatialGoalPreview
+  replaySelection: SpatialReplaySelection | null
   viewport: SpatialViewportState
   onPanViewport: (deltaXPx: number, deltaYPx: number) => void
   onZoomViewport: (
@@ -35,12 +64,23 @@ interface PlanarViewerCanvasProps {
   onCenterRobot: () => void
   onResetView: () => void
   onClearTrail: () => void
+  onClearLidarHistory: () => void
+  onClearObservedMap: () => void
+  onToggleObservedMapFrozen: () => void
+  onToggleOccupancyLayer: () => void
+  onSelectGoalAtWorldPoint: (point: { xMm: number; yMm: number }) => void
+  onArmGoalPreview: () => void
+  onDisarmGoalPreview: () => void
+  onClearGoalPreview: () => void
 }
 
 interface PointerDragState {
   pointerId: number
+  startX: number
+  startY: number
   lastX: number
   lastY: number
+  moved: boolean
 }
 
 function normalizeAngleDelta(value: number) {
@@ -76,6 +116,38 @@ function buildPalette(target: HTMLElement): PlanarScenePalette {
     robotFill: resolve('--surface-alt', '#152334'),
     robotStroke: resolve('--text', '#e5eef7'),
     heading: resolve('--primary', '#7dd3fc'),
+    lidarSweep: resolve('--info', '#38bdf8'),
+    lidarPoint: resolve('--accent', '#2dd4bf'),
+    lidarGhost: resolve('--text-muted', '#6b7a90'),
+    observedMapPoint: resolve('--text-muted', '#6b7a90'),
+    observedMapRecent: resolve('--accent', '#2dd4bf'),
+    occupancyFree: resolve('--info', '#38bdf8'),
+    occupancyOccupied: resolve('--warning', '#f59e0b'),
+    occupancyMixed: resolve('--accent', '#2dd4bf'),
+    goalReady: resolve('--primary', '#7dd3fc'),
+    goalArmed: resolve('--accent', '#2dd4bf'),
+    goalBlocked: resolve('--warning', '#f59e0b'),
+    registrationSweep: resolve('--warning', '#f59e0b'),
+    registrationPoint: resolve('--warning', '#f59e0b'),
+  }
+}
+
+function matchesEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
+function screenToWorld(
+  point: { x: number; y: number },
+  viewport: SpatialViewportState,
+  canvasSize: { width: number; height: number },
+) {
+  return {
+    xMm: viewport.centerXMm + (point.x - canvasSize.width / 2) / viewport.zoomPxPerMm,
+    yMm: viewport.centerYMm - (point.y - canvasSize.height / 2) / viewport.zoomPxPerMm,
   }
 }
 
@@ -112,6 +184,152 @@ function interpolatePose(
   }
 }
 
+function buildSceneLidar(
+  lidarSelection: ResolvedSpatialLidar,
+  pose: PlanarScenePose | null,
+): PlanarSceneLidar | null {
+  if (!pose || !lidarSelection.isRenderable) {
+    return null
+  }
+
+  const points = decodeSpatialLidarPoints(lidarSelection.scan)
+
+  if (points.length === 0) {
+    return null
+  }
+
+  return {
+    freshness: lidarSelection.scan.freshness,
+    frame: lidarSelection.scan.frame,
+    poseFrame: lidarSelection.scan.poseFrame,
+    points,
+  }
+}
+
+function buildSceneLidarHistory(history: SpatialBufferedLidarScan[]): PlanarSceneBufferedLidar[] {
+  return history.map((scan) => ({
+    freshness: scan.freshness,
+    frame: scan.frame,
+    poseFrame: scan.poseFrame,
+    pose: {
+      xMm: scan.pose.xMm,
+      yMm: scan.pose.yMm,
+      yawDeg: scan.pose.yawDeg,
+      freshness: scan.freshness,
+      frame: scan.pose.frame,
+      source: scan.pose.source,
+    },
+    points: scan.points,
+  }))
+}
+
+function buildObservedMap(
+  observedMapScans: SpatialObservedMapScan[],
+  fadeOlderScans: boolean,
+): PlanarSceneObservedMap | null {
+  if (observedMapScans.length === 0) {
+    return null
+  }
+
+  return {
+    frame: observedMapScans[observedMapScans.length - 1]?.frame ?? 'none',
+    fadeOlderScans,
+    scans: observedMapScans.map((scan) => ({
+      timestampMs: scan.timestampMs,
+      sequence: scan.sequence,
+      frame: scan.frame,
+      pointCount: scan.pointCount,
+      points: scan.points,
+    })),
+  }
+}
+
+function buildOccupancyLayer(
+  occupancyLayer: SpatialOccupancyLayer | null,
+): PlanarSceneOccupancyLayer | null {
+  if (!occupancyLayer || occupancyLayer.cells.length === 0) {
+    return null
+  }
+
+  return {
+    frame: occupancyLayer.frame,
+    cellSizeMm: occupancyLayer.cellSizeMm,
+    cells: occupancyLayer.cells.map((cell) => ({
+      centerXMm: cell.centerXMm,
+      centerYMm: cell.centerYMm,
+      freeCount: cell.freeCount,
+      occupiedCount: cell.occupiedCount,
+      state: cell.state,
+      confidence: cell.confidence,
+    })),
+  }
+}
+
+function buildReplayPose(replaySelection: SpatialReplaySelection | null): PlanarScenePose | null {
+  if (!replaySelection) {
+    return null
+  }
+
+  return {
+    xMm: replaySelection.scan.pose.xMm,
+    yMm: replaySelection.scan.pose.yMm,
+    yawDeg: replaySelection.scan.pose.yawDeg,
+    freshness: replaySelection.scan.freshness === 'invalid' ? 'stale' : replaySelection.scan.freshness,
+    frame: replaySelection.scan.pose.frame,
+    source: replaySelection.scan.pose.source,
+  }
+}
+
+function buildReplayLidar(replaySelection: SpatialReplaySelection | null): PlanarSceneLidar | null {
+  if (!replaySelection) {
+    return null
+  }
+
+  return {
+    freshness: replaySelection.scan.freshness,
+    frame: replaySelection.scan.frame,
+    poseFrame: replaySelection.scan.poseFrame,
+    points: replaySelection.scan.points,
+  }
+}
+
+function buildRegistrationOverlay(
+  scanRegistration: SpatialScanRegistration,
+): PlanarSceneRegistration | null {
+  if (!scanRegistration.available || scanRegistration.alignedReferencePoints.length === 0) {
+    return null
+  }
+
+  return {
+    quality: scanRegistration.quality,
+    points: scanRegistration.alignedReferencePoints,
+  }
+}
+
+function buildGoalPreviewSceneModel(goalPreview: SpatialGoalPreview): PlanarSceneGoalPreview | null {
+  if (goalPreview.status === 'idle' || goalPreview.requestedXMm === null || goalPreview.requestedYMm === null) {
+    return null
+  }
+
+  if (goalPreview.status === 'unavailable') {
+    return null
+  }
+
+  return {
+    status:
+      goalPreview.status === 'ready' || goalPreview.status === 'armed'
+        ? goalPreview.status
+        : goalPreview.target
+          ? 'unreachable'
+          : 'blocked',
+    requestedXMm: goalPreview.requestedXMm,
+    requestedYMm: goalPreview.requestedYMm,
+    targetXMm: goalPreview.target?.snappedXMm ?? null,
+    targetYMm: goalPreview.target?.snappedYMm ?? null,
+    path: goalPreview.path,
+  }
+}
+
 function OverlayButton({
   label,
   onClick,
@@ -132,14 +350,33 @@ function OverlayButton({
 
 export function PlanarViewerCanvas({
   poseSelection,
+  lidarSelection,
+  scanRegistration,
   poseTransition,
   trail,
+  lidarHistory,
+  observedMapScans,
+  observedMapFadeOlderScans,
+  observedMapFrozen,
+  occupancyLayer,
+  showOccupancyLayer,
+  occupancyDisplayMode,
+  goalPreview,
+  replaySelection,
   viewport,
   onPanViewport,
   onZoomViewport,
   onCenterRobot,
   onResetView,
   onClearTrail,
+  onClearLidarHistory,
+  onClearObservedMap,
+  onToggleObservedMapFrozen,
+  onToggleOccupancyLayer,
+  onSelectGoalAtWorldPoint,
+  onArmGoalPreview,
+  onDisarmGoalPreview,
+  onClearGoalPreview,
 }: PlanarViewerCanvasProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -153,8 +390,35 @@ export function PlanarViewerCanvas({
       viewport,
       poseTransition,
       poseSelection,
+      lidarSelection,
+      scanRegistration,
+      lidarHistory,
+      observedMapScans,
+      observedMapFadeOlderScans,
+      observedMapFrozen,
+      occupancyLayer,
+      showOccupancyLayer,
+      occupancyDisplayMode,
+      goalPreview,
+      replaySelection,
     }),
-    [poseSelection, poseTransition, trail, viewport],
+    [
+      lidarHistory,
+      lidarSelection,
+      occupancyDisplayMode,
+      goalPreview,
+      occupancyLayer,
+      observedMapFadeOlderScans,
+      observedMapFrozen,
+      observedMapScans,
+      poseSelection,
+      poseTransition,
+      replaySelection,
+      scanRegistration,
+      showOccupancyLayer,
+      trail,
+      viewport,
+    ],
   )
 
   useEffect(() => {
@@ -208,13 +472,27 @@ export function PlanarViewerCanvas({
 
     context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
+    const livePose = interpolatePose(sceneSnapshot.poseTransition, timestampMs)
+    const pose = buildReplayPose(sceneSnapshot.replaySelection) ?? livePose
+
     drawPlanarScene(context, {
       widthPx: width,
       heightPx: height,
       viewport: sceneSnapshot.viewport,
       palette: buildPalette(shell),
       trail: sceneSnapshot.trail,
-      pose: interpolatePose(sceneSnapshot.poseTransition, timestampMs),
+      pose,
+      observedMap: buildObservedMap(
+        sceneSnapshot.observedMapScans,
+        sceneSnapshot.observedMapFadeOlderScans,
+      ),
+      occupancy: buildOccupancyLayer(sceneSnapshot.occupancyLayer),
+      goalPreview: buildGoalPreviewSceneModel(sceneSnapshot.goalPreview),
+      lidarHistory: buildSceneLidarHistory(sceneSnapshot.lidarHistory),
+      registration: buildRegistrationOverlay(sceneSnapshot.scanRegistration),
+      lidar:
+        buildReplayLidar(sceneSnapshot.replaySelection) ??
+        buildSceneLidar(sceneSnapshot.lidarSelection, pose),
     })
   })
 
@@ -233,6 +511,42 @@ export function PlanarViewerCanvas({
     }
   }, [renderFrame])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (matchesEditableTarget(event.target)) {
+        return
+      }
+
+      if (event.code === 'KeyN') {
+        if (goalPreview.status === 'ready') {
+          event.preventDefault()
+          onArmGoalPreview()
+        } else if (goalPreview.status === 'armed') {
+          event.preventDefault()
+          onDisarmGoalPreview()
+        }
+      }
+
+      if (event.code === 'Escape') {
+        if (goalPreview.status !== 'idle') {
+          event.preventDefault()
+          onClearGoalPreview()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [
+    goalPreview.status,
+    onArmGoalPreview,
+    onClearGoalPreview,
+    onDisarmGoalPreview,
+  ])
+
   const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
     const rect = event.currentTarget.getBoundingClientRect()
@@ -249,12 +563,18 @@ export function PlanarViewerCanvas({
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+
     dragStateRef.current = {
       pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
       lastX: event.clientX,
       lastY: event.clientY,
+      moved: false,
     }
-    setIsDragging(true)
 
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -265,16 +585,42 @@ export function PlanarViewerCanvas({
       return
     }
 
-    onPanViewport(event.clientX - dragState.lastX, event.clientY - dragState.lastY)
+    const moved =
+      dragState.moved ||
+      Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) >= 5
+
+    if (moved) {
+      onPanViewport(event.clientX - dragState.lastX, event.clientY - dragState.lastY)
+      if (!dragState.moved) {
+        setIsDragging(true)
+      }
+    }
+
     dragStateRef.current = {
       ...dragState,
       lastX: event.clientX,
       lastY: event.clientY,
+      moved,
     }
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (dragStateRef.current?.pointerId === event.pointerId) {
+    const dragState = dragStateRef.current
+    if (dragState?.pointerId === event.pointerId) {
+      if (!dragState.moved) {
+        const rect = event.currentTarget.getBoundingClientRect()
+        onSelectGoalAtWorldPoint(
+          screenToWorld(
+            {
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+            },
+            viewport,
+            canvasSize,
+          ),
+        )
+      }
+
       dragStateRef.current = null
       setIsDragging(false)
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -298,20 +644,106 @@ export function PlanarViewerCanvas({
 
       <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-3 px-4 py-4">
         <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/86 px-3 py-2 text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">
-          Drag to pan. Use the mouse wheel to zoom the SE(2) view around the cursor.
+          <div>Click a visited free area to preview a path. Drag to pan. Use the mouse wheel to zoom the SE(2) view around the cursor.</div>
+          <div>Press N to arm the current preview locally. Press Esc to clear the target.</div>
+          <div>Compact LiDAR overlays only when its pose frame matches the selected source.</div>
         </div>
 
         <div className="flex flex-wrap justify-end gap-2">
           <OverlayButton label="Center on Robot" onClick={onCenterRobot} />
           <OverlayButton label="Reset View" onClick={onResetView} />
           <OverlayButton label="Clear Trail" onClick={onClearTrail} />
+          <OverlayButton
+            label={showOccupancyLayer ? 'Hide Occupancy' : 'Show Occupancy'}
+            onClick={onToggleOccupancyLayer}
+          />
+          <OverlayButton
+            label={observedMapFrozen ? 'Resume Map' : 'Freeze Map'}
+            onClick={onToggleObservedMapFrozen}
+          />
+          {goalPreview.status !== 'idle' ? (
+            <OverlayButton
+              label={
+                goalPreview.status === 'armed'
+                  ? 'Disarm Goal'
+                  : goalPreview.status === 'ready'
+                    ? 'Arm Goal'
+                    : 'Clear Goal'
+              }
+              onClick={
+                goalPreview.status === 'armed'
+                  ? onDisarmGoalPreview
+                  : goalPreview.status === 'ready'
+                    ? onArmGoalPreview
+                    : onClearGoalPreview
+              }
+            />
+          ) : null}
+          <OverlayButton label="Clear Map" onClick={onClearObservedMap} />
+          <OverlayButton label="Clear Scan Buffer" onClick={onClearLidarHistory} />
         </div>
       </div>
+
+      {replaySelection ? (
+        <div className="pointer-events-none absolute left-4 top-24 rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">
+          <div className="font-semibold uppercase tracking-[0.14em] text-[var(--text)]">Replay Mode</div>
+          <div>
+            Sample {replaySelection.index + 1}/{replaySelection.total} | Seq {replaySelection.scan.sequence}
+          </div>
+          <div>
+            Captured {new Date(replaySelection.scan.timestampMs).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })}{' '}
+            | {formatPoseAgeLabel(replaySelection.ageMs)} old
+          </div>
+        </div>
+      ) : (
+        <div className="pointer-events-none absolute left-4 top-24 rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">
+          <div className="font-semibold uppercase tracking-[0.14em] text-[var(--text)]">Live Mode</div>
+          <div>The viewer is following the latest pose and current compact LiDAR sample.</div>
+        </div>
+      )}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-end justify-between gap-3 px-4 py-4">
         <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">
           <div>Zoom {Math.round(viewport.zoomPxPerMm * 1000)} px/m</div>
           <div>Trail {trail.length} pts</div>
+          <div>
+            Observed map {observedMapScans.length} scans |{' '}
+            {observedMapScans.reduce((total, scan) => total + scan.pointCount, 0)} pts
+          </div>
+          <div>Observed map mode {observedMapFrozen ? 'frozen' : 'live'}</div>
+          <div>
+            Occupancy{' '}
+            {showOccupancyLayer && occupancyLayer
+              ? `${occupancyLayer.cells.length} cells | ${occupancyDisplayMode}`
+              : showOccupancyLayer
+                ? 'building'
+                : 'hidden'}
+          </div>
+          <div>Buffered scans {lidarHistory.length}</div>
+          <div>
+            LiDAR{' '}
+            {lidarSelection.isRenderable
+              ? `${lidarSelection.scan.validPointCount}/${lidarSelection.scan.pointCount} pts`
+              : lidarSelection.renderState}
+          </div>
+          <div>
+            Registration{' '}
+            {scanRegistration.available && scanRegistration.meanResidualMm !== null
+              ? `${scanRegistration.quality} | ${Math.round(scanRegistration.meanResidualMm)} mm`
+              : 'unavailable'}
+          </div>
+          <div>
+            Goal preview{' '}
+            {goalPreview.status === 'idle'
+              ? 'idle'
+              : goalPreview.target
+                ? `${goalPreview.status} | ${goalPreview.path.length} pts`
+                : goalPreview.status}
+          </div>
         </div>
 
         <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-right text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">

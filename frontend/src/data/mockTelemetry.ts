@@ -4,6 +4,11 @@ import type {
   PlanarPoseData,
   PlanarPoseFreshness,
   PlanarPoseSource,
+  SpatialLidarFormat,
+  SpatialLidarScan,
+  SpatialLidarSource,
+  SpatialSnapshot,
+  SpatialStreamStatus,
   TelemetrySnapshot,
   TelemetryPoseSources,
 } from '../types/telemetry'
@@ -65,6 +70,48 @@ export function createDefaultPoseSources(): TelemetryPoseSources {
     reactive: createPlanarPoseData('reactive', { available: false, freshness: 'invalid' }),
     mapeamento: createPlanarPoseData('mapeamento', { available: false, freshness: 'invalid' }),
     simulation: createPlanarPoseData('simulation', { available: false, freshness: 'invalid' }),
+  }
+}
+
+export function createSpatialLidarScan(
+  source: SpatialLidarSource,
+  overrides: Partial<SpatialLidarScan> = {},
+): SpatialLidarScan {
+  const format =
+    source === 'robot' || source === 'simulation'
+      ? ('polar-2d-v1' satisfies SpatialLidarFormat)
+      : ('none' satisfies SpatialLidarFormat)
+
+  return {
+    available: source !== 'none',
+    source,
+    freshness: (source === 'none' ? 'invalid' : 'stale') satisfies PlanarPoseFreshness,
+    format,
+    frame: source === 'none' ? 'none' : 'robot_base',
+    poseFrame: source === 'simulation' ? 'simulation_local' : source === 'robot' ? 'odometry_local' : 'none',
+    angleStartDeg: 120,
+    angleStepDeg: 4,
+    distancesMm: [],
+    pointCount: 0,
+    validPointCount: 0,
+    sequence: 0,
+    timestampMs: 0,
+    ...overrides,
+  }
+}
+
+export function createSpatialStreamStatus(
+  transport: SpatialStreamStatus['transport'],
+  overrides: Partial<SpatialStreamStatus> = {},
+): SpatialStreamStatus {
+  return {
+    transport,
+    endpoint: transport === 'simulation' ? 'simulation://spatial' : '/api/spatial',
+    message:
+      transport === 'simulation'
+        ? 'Simulation spatial feed active.'
+        : 'Dedicated spatial feed unavailable.',
+    ...overrides,
   }
 }
 
@@ -234,6 +281,36 @@ export function createOfflineSnapshot(): TelemetrySnapshot {
       turnDetected: null,
       turnExecutable: null,
     },
+  }
+}
+
+export function createBaseSpatialSnapshot(): SpatialSnapshot {
+  const base = createBaseSnapshot()
+
+  return {
+    timestamp: base.timestamp,
+    bridgeStatus: base.bridgeStatus,
+    connection: base.connection,
+    pose: base.pose,
+    poseSources: base.poseSources,
+    lidar: createSpatialLidarScan('none', { available: false, freshness: 'invalid' }),
+    stream: createSpatialStreamStatus('bridge-http-poll'),
+  }
+}
+
+export function createOfflineSpatialSnapshot(): SpatialSnapshot {
+  const base = createOfflineSnapshot()
+
+  return {
+    timestamp: base.timestamp,
+    bridgeStatus: base.bridgeStatus,
+    connection: base.connection,
+    pose: base.pose,
+    poseSources: base.poseSources,
+    lidar: createSpatialLidarScan('none', { available: false, freshness: 'invalid' }),
+    stream: createSpatialStreamStatus('bridge-http-poll', {
+      message: 'Dedicated spatial feed waiting for the robot link.',
+    }),
   }
 }
 

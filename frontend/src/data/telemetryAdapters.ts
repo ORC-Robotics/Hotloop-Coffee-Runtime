@@ -7,17 +7,28 @@ import type {
   PlanarPoseSource,
   RawRemoteDriverPayload,
   RawBackendTelemetry,
+  RawSpatialPayload,
   RawTelemetryCatalogPayload,
   RawNetworkTablesPayload,
   RemoteDriverFeed,
   RemoteDriverStatus,
+  SpatialLidarScan,
+  SpatialSnapshot,
+  SpatialStreamStatus,
   TelemetryCatalogFeed,
   TelemetryCatalogStats,
   TelemetrySnapshot,
   TelemetryTopic,
   TelemetryTopicScope,
 } from '../types/telemetry'
-import { createBaseSnapshot, createDefaultPoseSources, createPlanarPoseData } from './mockTelemetry'
+import {
+  createBaseSnapshot,
+  createBaseSpatialSnapshot,
+  createDefaultPoseSources,
+  createPlanarPoseData,
+  createSpatialLidarScan,
+  createSpatialStreamStatus,
+} from './mockTelemetry'
 
 function createFallbackControlMode(): ControlModeState {
   return {
@@ -34,6 +45,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     transport: 'networktables',
     chooserPath: 'SmartDashboard/Auto mode',
     telemetryEndpoint: '/api/telemetry',
+    spatialEndpoint: '/api/spatial',
     controlModeEndpoint: '/api/control-mode',
     topicCatalogEndpoint: '/api/topics',
     topicWriteEndpoint: '/api/topics/write',
@@ -127,6 +139,38 @@ function normalizePoseSources(payload?: RawBackendTelemetry['poseSources']) {
   }
 }
 
+function normalizeSpatialLidar(payload?: Partial<SpatialLidarScan>): SpatialLidarScan {
+  const source = payload?.source ?? 'none'
+  const base = createSpatialLidarScan(source, {
+    available: false,
+    freshness: 'invalid',
+  })
+  const rawDistances = Array.isArray(payload?.distancesMm) ? payload?.distancesMm : base.distancesMm
+  const distancesMm = rawDistances.map((distance) =>
+    Number.isFinite(Number(distance)) ? Number(distance) : 0,
+  )
+
+  return {
+    ...base,
+    ...(payload ?? {}),
+    source,
+    distancesMm,
+    pointCount: payload?.pointCount ?? distancesMm.length,
+    validPointCount:
+      payload?.validPointCount ?? distancesMm.filter((distanceMm) => distanceMm > 0).length,
+  }
+}
+
+function normalizeSpatialStream(payload?: Partial<SpatialStreamStatus>): SpatialStreamStatus {
+  const transport = payload?.transport ?? 'bridge-http-poll'
+
+  return {
+    ...createSpatialStreamStatus(transport),
+    ...(payload ?? {}),
+    transport,
+  }
+}
+
 export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySnapshot {
   const base = createBaseSnapshot()
 
@@ -154,6 +198,23 @@ export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySn
     systems: { ...base.systems, ...payload.systems },
     battery: { ...base.battery, ...payload.battery },
     reactive: { ...base.reactive, ...payload.reactive },
+  }
+}
+
+export function adaptSpatialPayload(payload: RawSpatialPayload): SpatialSnapshot {
+  const base = createBaseSpatialSnapshot()
+
+  return {
+    ...base,
+    timestamp: payload.timestamp ?? base.timestamp,
+    pose: normalizeAutoPose(payload.pose),
+    poseSources: normalizePoseSources(payload.poseSources),
+    bridgeStatus: payload.bridgeStatus
+      ? { ...createFallbackBridgeStatus(), ...payload.bridgeStatus }
+      : createFallbackBridgeStatus(),
+    connection: { ...base.connection, ...payload.connection },
+    lidar: normalizeSpatialLidar(payload.lidar),
+    stream: normalizeSpatialStream(payload.stream),
   }
 }
 

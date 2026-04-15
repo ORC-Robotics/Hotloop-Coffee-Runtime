@@ -50,6 +50,11 @@ POSE_SOURCE_DEFAULT_FRAMES = {
     "none": "none",
 }
 POSE_SOURCE_STALE_AFTER_MS = 1000
+SPATIAL_ENDPOINT_PATH = "/api/spatial"
+SPATIAL_LIDAR_PACKET_KEY = "Telemetry/Spatial/Lidar Packet"
+SPATIAL_LIDAR_DEFAULT_FRAME = "robot_base"
+SPATIAL_LIDAR_FORMAT = "polar-2d-v1"
+SPATIAL_LIDAR_STALE_AFTER_MS = 1000
 
 
 def utc_now() -> datetime:
@@ -656,6 +661,19 @@ class TelemetryBridge:
             }
             for source in ("odometry", "reactive", "mapeamento", "simulation")
         }
+        self.spatial_lidar_state: dict[str, Any] = {
+            "signature": None,
+            "timestampMs": 0,
+            "sequence": 0,
+            "frame": SPATIAL_LIDAR_DEFAULT_FRAME,
+            "poseFrame": POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+            "angleStartDeg": 0.0,
+            "angleStepDeg": 0.0,
+            "distancesMm": [],
+            "pointCount": 0,
+            "validPointCount": 0,
+            "format": SPATIAL_LIDAR_FORMAT,
+        }
 
     def _preferred_camera_host(self) -> str | None:
         host_candidates = [
@@ -828,6 +846,268 @@ class TelemetryBridge:
 
         return self._invalid_pose(source)
 
+    def _resolve_connection_payload(
+        self,
+        online: bool,
+        lidar_healthy: bool,
+        valid_scan: bool,
+    ) -> dict[str, Any]:
+        if online and lidar_healthy and valid_scan:
+            connection_health = "stable"
+        elif online:
+            connection_health = "degraded"
+        else:
+            connection_health = "unstable"
+
+        if self.client.connection_mode == "team-auto":
+            route_label = "NetworkTables team discovery"
+        elif self.client.connection_mode == "manual-fallback":
+            route_label = "Manual fallback route"
+        else:
+            route_label = "Bridge telemetry route"
+
+        connected_host = self.client.connected_host
+        if not online and connected_host == "unknown":
+            connected_host = "--"
+        elif online and connected_host == "unknown":
+            connected_host = self.client.connection_target
+
+        return {
+            "online": online,
+            "team": self.client.team,
+            "target": self.client.connection_target,
+            "hostSeen": connected_host,
+            "mode": self.client.connection_mode,
+            "routeLabel": route_label,
+            "health": connection_health,
+        }
+
+    def _resolve_pose_bundle(
+        self,
+        timestamp_ms: int,
+        online: bool,
+        reactive_state_time_sec: float,
+        command_center: float,
+        command_forward: float,
+        command_rotation: float,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        odometry_available = online and self._get_bool_alias("Telemetry/Odometry/Available", default=False)
+        odometry_pose_x_mm = self._get_number_alias("Telemetry/Odometry/Pose X (mm)", default=0.0)
+        odometry_pose_y_mm = self._get_number_alias("Telemetry/Odometry/Pose Y (mm)", default=0.0)
+        odometry_pose_heading_deg = self._get_number_alias(
+            "Telemetry/Odometry/Pose Heading (deg)",
+            default=0.0,
+        )
+        odometry_pose_frame = self._get_string_alias(
+            "Telemetry/Odometry/Pose Frame",
+            default=POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+        )
+
+        reactive_pose_x_mm = self._get_number_alias("Telemetry/Reactive/Pose X (mm)", default=0.0)
+        reactive_pose_y_mm = self._get_number_alias("Telemetry/Reactive/Pose Y (mm)", default=0.0)
+        reactive_pose_heading_deg = self._get_number_alias("Telemetry/Reactive/Pose Heading (deg)", default=0.0)
+        reactive_pose_active = online and (
+            reactive_state_time_sec > 0.0
+            or abs(reactive_pose_x_mm) >= 1.0
+            or abs(reactive_pose_y_mm) >= 1.0
+            or abs(reactive_pose_heading_deg) >= 0.5
+            or abs(command_center) >= 0.05
+            or abs(command_forward) >= 0.05
+            or abs(command_rotation) >= 0.05
+        )
+
+        mapeamento_active = online and self._get_bool_alias("Telemetry/Mapeamento/Active", default=False)
+        mapeamento_pose_x_mm = self._get_number_alias("Telemetry/Mapeamento/Pose X (mm)", default=0.0)
+        mapeamento_pose_y_mm = self._get_number_alias("Telemetry/Mapeamento/Pose Y (mm)", default=0.0)
+        mapeamento_pose_heading_deg = self._get_number_alias(
+            "Telemetry/Mapeamento/Pose Heading (deg)",
+            default=0.0,
+        )
+
+        pose_sources = {
+            "odometry": self._observe_pose_source(
+                "odometry",
+                timestamp_ms,
+                odometry_available,
+                odometry_pose_x_mm,
+                odometry_pose_y_mm,
+                odometry_pose_heading_deg,
+                odometry_pose_frame or POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+            ),
+            "reactive": self._observe_pose_source(
+                "reactive",
+                timestamp_ms,
+                reactive_pose_active,
+                reactive_pose_x_mm,
+                reactive_pose_y_mm,
+                reactive_pose_heading_deg,
+                POSE_SOURCE_DEFAULT_FRAMES["reactive"],
+            ),
+            "mapeamento": self._observe_pose_source(
+                "mapeamento",
+                timestamp_ms,
+                mapeamento_active,
+                mapeamento_pose_x_mm,
+                mapeamento_pose_y_mm,
+                mapeamento_pose_heading_deg,
+                POSE_SOURCE_DEFAULT_FRAMES["mapeamento"],
+            ),
+            "simulation": self._invalid_pose("simulation"),
+        }
+
+        if online:
+            auto_pose = (
+                pose_sources["odometry"]
+                if pose_sources["odometry"]["available"]
+                else pose_sources["reactive"]
+                if pose_sources["reactive"]["available"]
+                else pose_sources["mapeamento"]
+                if pose_sources["mapeamento"]["available"]
+                else self._invalid_pose("none")
+            )
+        else:
+            auto_pose = self._invalid_pose("none")
+
+        return pose_sources, auto_pose
+
+    def _invalid_spatial_lidar(self, source: str = "none") -> dict[str, Any]:
+        return {
+            "available": False,
+            "source": source,
+            "freshness": "invalid",
+            "format": "none",
+            "frame": "none",
+            "poseFrame": "none",
+            "angleStartDeg": 0.0,
+            "angleStepDeg": 0.0,
+            "distancesMm": [],
+            "pointCount": 0,
+            "validPointCount": 0,
+            "sequence": 0,
+            "timestampMs": 0,
+        }
+
+    def _parse_spatial_lidar_packet(self, raw_packet: str) -> dict[str, Any] | None:
+        packet_text = str(raw_packet or "").strip()
+        if not packet_text:
+            return None
+
+        try:
+            payload = json.loads(packet_text)
+        except Exception:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        distances_raw = payload.get("distancesMm")
+        if not isinstance(distances_raw, list):
+            return None
+
+        distances_mm: list[float] = []
+        for item in distances_raw[:720]:
+            try:
+                numeric = float(item)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            if not math.isfinite(numeric) or numeric < 0.0:
+                numeric = 0.0
+            distances_mm.append(numeric)
+
+        valid_point_count = sum(1 for distance_mm in distances_mm if distance_mm > 0.0)
+        return {
+            "format": str(payload.get("format") or SPATIAL_LIDAR_FORMAT),
+            "frame": str(payload.get("frame") or SPATIAL_LIDAR_DEFAULT_FRAME),
+            "poseFrame": str(payload.get("poseFrame") or POSE_SOURCE_DEFAULT_FRAMES["odometry"]),
+            "angleStartDeg": float(payload.get("angleStartDeg", 0.0)),
+            "angleStepDeg": float(payload.get("angleStepDeg", 0.0)),
+            "distancesMm": distances_mm,
+            "pointCount": len(distances_mm),
+            "validPointCount": valid_point_count,
+        }
+
+    def _observe_spatial_lidar(
+        self,
+        timestamp_ms: int,
+        online: bool,
+        lidar_healthy: bool,
+        valid_scan: bool,
+        pose_frame: str,
+    ) -> dict[str, Any]:
+        raw_packet = self._get_string_alias(SPATIAL_LIDAR_PACKET_KEY, default="")
+        parsed_packet = self._parse_spatial_lidar_packet(raw_packet)
+        lidar_scan_sequence = int(round(self._get_number_alias("Telemetry/Lidar/Scan Sequence", default=0.0)))
+        currently_available = (
+            online and
+            lidar_healthy and
+            valid_scan and
+            parsed_packet is not None and
+            parsed_packet["validPointCount"] > 0
+        )
+        state = self.spatial_lidar_state
+
+        if currently_available and parsed_packet is not None:
+            signature = (
+                lidar_scan_sequence,
+                parsed_packet["format"],
+                parsed_packet["frame"],
+                parsed_packet["poseFrame"] or pose_frame,
+                parsed_packet["angleStartDeg"],
+                parsed_packet["angleStepDeg"],
+                tuple(round(distance_mm, 1) for distance_mm in parsed_packet["distancesMm"]),
+            )
+
+            if state.get("signature") != signature:
+                state["signature"] = signature
+                state["timestampMs"] = int(timestamp_ms)
+                state["sequence"] = max(lidar_scan_sequence, int(state.get("sequence", 0)) + 1)
+
+            state["format"] = parsed_packet["format"]
+            state["frame"] = parsed_packet["frame"] or SPATIAL_LIDAR_DEFAULT_FRAME
+            state["poseFrame"] = parsed_packet["poseFrame"] or pose_frame
+            state["angleStartDeg"] = parsed_packet["angleStartDeg"]
+            state["angleStepDeg"] = parsed_packet["angleStepDeg"]
+            state["distancesMm"] = parsed_packet["distancesMm"]
+            state["pointCount"] = parsed_packet["pointCount"]
+            state["validPointCount"] = parsed_packet["validPointCount"]
+            age_ms = max(0, int(timestamp_ms) - int(state.get("timestampMs", 0)))
+            freshness = "live" if age_ms <= SPATIAL_LIDAR_STALE_AFTER_MS else "stale"
+
+            return {
+                "available": True,
+                "source": "robot",
+                "freshness": freshness,
+                "format": state["format"],
+                "frame": state["frame"],
+                "poseFrame": state["poseFrame"],
+                "angleStartDeg": state["angleStartDeg"],
+                "angleStepDeg": state["angleStepDeg"],
+                "distancesMm": state["distancesMm"],
+                "pointCount": state["pointCount"],
+                "validPointCount": state["validPointCount"],
+                "sequence": int(state["sequence"]),
+                "timestampMs": int(state["timestampMs"]),
+            }
+
+        if state.get("signature") is not None:
+            return {
+                "available": True,
+                "source": "robot",
+                "freshness": "stale",
+                "format": str(state.get("format") or SPATIAL_LIDAR_FORMAT),
+                "frame": str(state.get("frame") or SPATIAL_LIDAR_DEFAULT_FRAME),
+                "poseFrame": str(state.get("poseFrame") or pose_frame),
+                "angleStartDeg": float(state.get("angleStartDeg", 0.0)),
+                "angleStepDeg": float(state.get("angleStepDeg", 0.0)),
+                "distancesMm": list(state.get("distancesMm") or []),
+                "pointCount": int(state.get("pointCount", 0)),
+                "validPointCount": int(state.get("validPointCount", 0)),
+                "sequence": int(state.get("sequence", 0)),
+                "timestampMs": int(state.get("timestampMs", 0)),
+            }
+
+        return self._invalid_spatial_lidar()
+
     def bridge_status(self) -> dict[str, Any]:
         control_state = self.control_mode.payload()
         connection_settings = self.client.get_connection_settings()
@@ -837,6 +1117,7 @@ class TelemetryBridge:
             "transport": "networktables",
             "chooserPath": f"SmartDashboard/{AUTO_MODE_CHOOSER_PATH}",
             "telemetryEndpoint": "/api/telemetry",
+            "spatialEndpoint": SPATIAL_ENDPOINT_PATH,
             "controlModeEndpoint": "/api/control-mode",
             "topicCatalogEndpoint": "/api/topics",
             "topicWriteEndpoint": "/api/topics/write",
@@ -981,26 +1262,7 @@ class TelemetryBridge:
 
         if pending_turn_armed is None:
             pending_turn_armed = pending_turn_direction not in ("", "NONE")
-
-        if online and lidar_healthy and valid_scan:
-            connection_health = "stable"
-        elif online:
-            connection_health = "degraded"
-        else:
-            connection_health = "unstable"
-
-        if self.client.connection_mode == "team-auto":
-            route_label = "NetworkTables team discovery"
-        elif self.client.connection_mode == "manual-fallback":
-            route_label = "Manual fallback route"
-        else:
-            route_label = "Bridge telemetry route"
-
-        connected_host = self.client.connected_host
-        if not online and connected_host == "unknown":
-            connected_host = "--"
-        elif online and connected_host == "unknown":
-            connected_host = self.client.connection_target
+        connection = self._resolve_connection_payload(online, lidar_healthy, valid_scan)
 
         timestamp = utc_now()
         timestamp_iso = timestamp.isoformat()
@@ -1038,77 +1300,14 @@ class TelemetryBridge:
         command_forward = self._get_number_alias("Telemetry/Reactive/Forward Command", default=0.0)
         command_rotation = self._get_number_alias("Telemetry/Reactive/Rotation Command", default=0.0)
         reactive_state_time_sec = self._get_number_alias("Telemetry/Reactive/State Time (s)", default=0.0)
-
-        odometry_available = online and self._get_bool_alias("Telemetry/Odometry/Available", default=False)
-        odometry_pose_x_mm = self._get_number_alias("Telemetry/Odometry/Pose X (mm)", default=0.0)
-        odometry_pose_y_mm = self._get_number_alias("Telemetry/Odometry/Pose Y (mm)", default=0.0)
-        odometry_pose_heading_deg = self._get_number_alias("Telemetry/Odometry/Pose Heading (deg)", default=0.0)
-        odometry_pose_frame = self._get_string_alias(
-            "Telemetry/Odometry/Pose Frame",
-            default=POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+        pose_sources, auto_pose = self._resolve_pose_bundle(
+            timestamp_ms,
+            online,
+            reactive_state_time_sec,
+            command_center,
+            command_forward,
+            command_rotation,
         )
-
-        reactive_pose_x_mm = self._get_number_alias("Telemetry/Reactive/Pose X (mm)", default=0.0)
-        reactive_pose_y_mm = self._get_number_alias("Telemetry/Reactive/Pose Y (mm)", default=0.0)
-        reactive_pose_heading_deg = self._get_number_alias("Telemetry/Reactive/Pose Heading (deg)", default=0.0)
-        reactive_pose_active = online and (
-            reactive_state_time_sec > 0.0
-            or abs(reactive_pose_x_mm) >= 1.0
-            or abs(reactive_pose_y_mm) >= 1.0
-            or abs(reactive_pose_heading_deg) >= 0.5
-            or abs(command_center) >= 0.05
-            or abs(command_forward) >= 0.05
-            or abs(command_rotation) >= 0.05
-        )
-
-        mapeamento_active = online and self._get_bool_alias("Telemetry/Mapeamento/Active", default=False)
-        mapeamento_pose_x_mm = self._get_number_alias("Telemetry/Mapeamento/Pose X (mm)", default=0.0)
-        mapeamento_pose_y_mm = self._get_number_alias("Telemetry/Mapeamento/Pose Y (mm)", default=0.0)
-        mapeamento_pose_heading_deg = self._get_number_alias("Telemetry/Mapeamento/Pose Heading (deg)", default=0.0)
-
-        pose_sources = {
-            "odometry": self._observe_pose_source(
-                "odometry",
-                timestamp_ms,
-                odometry_available,
-                odometry_pose_x_mm,
-                odometry_pose_y_mm,
-                odometry_pose_heading_deg,
-                odometry_pose_frame or POSE_SOURCE_DEFAULT_FRAMES["odometry"],
-            ),
-            "reactive": self._observe_pose_source(
-                "reactive",
-                timestamp_ms,
-                reactive_pose_active,
-                reactive_pose_x_mm,
-                reactive_pose_y_mm,
-                reactive_pose_heading_deg,
-                POSE_SOURCE_DEFAULT_FRAMES["reactive"],
-            ),
-            "mapeamento": self._observe_pose_source(
-                "mapeamento",
-                timestamp_ms,
-                mapeamento_active,
-                mapeamento_pose_x_mm,
-                mapeamento_pose_y_mm,
-                mapeamento_pose_heading_deg,
-                POSE_SOURCE_DEFAULT_FRAMES["mapeamento"],
-            ),
-            "simulation": self._invalid_pose("simulation"),
-        }
-
-        if online:
-            auto_pose = (
-                pose_sources["odometry"]
-                if pose_sources["odometry"]["available"]
-                else pose_sources["reactive"]
-                if pose_sources["reactive"]["available"]
-                else pose_sources["mapeamento"]
-                if pose_sources["mapeamento"]["available"]
-                else self._invalid_pose("none")
-            )
-        else:
-            auto_pose = self._invalid_pose("none")
 
         return {
             "timestamp": timestamp_iso,
@@ -1116,15 +1315,7 @@ class TelemetryBridge:
             "bridgeStatus": self.bridge_status(),
             "pose": auto_pose,
             "poseSources": pose_sources,
-            "connection": {
-                "online": online,
-                "team": self.client.team,
-                "target": self.client.connection_target,
-                "hostSeen": connected_host,
-                "mode": self.client.connection_mode,
-                "routeLabel": route_label,
-                "health": connection_health,
-            },
+            "connection": connection,
             "heading": {
                 "yawDeg": live_yaw_deg,
                 "targetYawDeg": target_yaw_deg,
@@ -1194,6 +1385,74 @@ class TelemetryBridge:
             "remoteDriver": self.remote_driver.payload(),
         }
 
+    def spatial_payload(self) -> dict[str, Any]:
+        self.control_mode.refresh()
+        online = self.client.is_connected()
+        lidar_healthy = self._get_bool_alias(
+            "Telemetry/Lidar/Healthy",
+            "Telemetry/LiDAR/Healthy",
+            default=False,
+        )
+        valid_scan = self._get_bool_alias(
+            "Telemetry/Lidar/Has Valid Scan",
+            "Telemetry/LiDAR/Has Valid Scan",
+            default=False,
+        )
+        connection = self._resolve_connection_payload(online, lidar_healthy, valid_scan)
+
+        timestamp = utc_now()
+        timestamp_iso = timestamp.isoformat()
+        timestamp_ms = int(timestamp.timestamp() * 1000)
+
+        command_center = self._get_number_alias("Telemetry/Reactive/Center Command", default=0.0)
+        command_forward = self._get_number_alias("Telemetry/Reactive/Forward Command", default=0.0)
+        command_rotation = self._get_number_alias("Telemetry/Reactive/Rotation Command", default=0.0)
+        reactive_state_time_sec = self._get_number_alias("Telemetry/Reactive/State Time (s)", default=0.0)
+        pose_sources, auto_pose = self._resolve_pose_bundle(
+            timestamp_ms,
+            online,
+            reactive_state_time_sec,
+            command_center,
+            command_forward,
+            command_rotation,
+        )
+        preferred_pose_frame = (
+            pose_sources["odometry"]["frame"]
+            if pose_sources["odometry"]["available"]
+            else auto_pose["frame"]
+        )
+        lidar = self._observe_spatial_lidar(
+            timestamp_ms,
+            online,
+            lidar_healthy,
+            valid_scan,
+            preferred_pose_frame,
+        )
+
+        if online and lidar["available"]:
+            stream_message = "Dedicated spatial feed active with pose and compact lidar."
+        elif online:
+            stream_message = (
+                "Dedicated spatial feed active for pose. Compact lidar packet has not been published "
+                "by the robot yet."
+            )
+        else:
+            stream_message = "Dedicated spatial feed waiting for the robot link."
+
+        return {
+            "timestamp": timestamp_iso,
+            "bridgeStatus": self.bridge_status(),
+            "connection": connection,
+            "pose": auto_pose,
+            "poseSources": pose_sources,
+            "lidar": lidar,
+            "stream": {
+                "transport": "bridge-http-poll",
+                "endpoint": SPATIAL_ENDPOINT_PATH,
+                "message": stream_message,
+            },
+        }
+
 
 def build_handler(bridge: TelemetryBridge):
     class Handler(BaseHTTPRequestHandler):
@@ -1228,6 +1487,10 @@ def build_handler(bridge: TelemetryBridge):
 
             if self.path == "/api/telemetry":
                 self._send_json(bridge.payload())
+                return
+
+            if self.path == SPATIAL_ENDPOINT_PATH:
+                self._send_json(bridge.spatial_payload())
                 return
 
             if self.path == "/api/topics":

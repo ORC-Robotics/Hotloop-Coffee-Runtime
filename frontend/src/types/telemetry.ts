@@ -31,6 +31,9 @@ export type PlanarPoseSource = 'odometry' | 'reactive' | 'mapeamento' | 'simulat
 export type PlanarPoseFreshness = 'live' | 'stale' | 'invalid'
 export type PoseSourceOverride = 'auto' | 'odometry' | 'reactive' | 'mapeamento' | 'simulation'
 export type TelemetryPoseSourceKey = Exclude<PlanarPoseSource, 'none'>
+export type SpatialTransport = 'bridge-http-poll' | 'simulation'
+export type SpatialLidarSource = 'robot' | 'simulation' | 'none'
+export type SpatialLidarFormat = 'polar-2d-v1' | 'none'
 export type MockScenarioId =
   | 'corridor-cruise'
   | 'front-obstacle'
@@ -121,6 +124,28 @@ export interface TelemetryPoseSources {
   simulation: PlanarPoseData
 }
 
+export interface SpatialLidarScan {
+  available: boolean
+  source: SpatialLidarSource
+  freshness: PlanarPoseFreshness
+  format: SpatialLidarFormat
+  frame: string
+  poseFrame: string
+  angleStartDeg: number
+  angleStepDeg: number
+  distancesMm: number[]
+  pointCount: number
+  validPointCount: number
+  sequence: number
+  timestampMs: number
+}
+
+export interface SpatialStreamStatus {
+  transport: SpatialTransport
+  endpoint: string
+  message: string
+}
+
 export interface ReactiveStateData {
   state: string
   decision: string
@@ -193,6 +218,7 @@ export interface BridgeStatus {
   transport: string
   chooserPath: string
   telemetryEndpoint: string
+  spatialEndpoint?: string
   controlModeEndpoint: string
   topicCatalogEndpoint?: string
   topicWriteEndpoint?: string
@@ -320,6 +346,16 @@ export interface TelemetrySnapshot {
   reactive: ReactiveStateData
 }
 
+export interface SpatialSnapshot {
+  timestamp: string
+  bridgeStatus?: BridgeStatus
+  connection: ConnectionStatus
+  pose: PlanarPoseData
+  poseSources: TelemetryPoseSources
+  lidar: SpatialLidarScan
+  stream: SpatialStreamStatus
+}
+
 export interface TelemetryDerivedState {
   connectionTone: UiTone
   robotHealthTone: UiTone
@@ -384,6 +420,16 @@ export interface RawBackendTelemetry {
   systems?: Partial<SystemHealthData>
   battery?: Partial<BatteryData>
   reactive?: Partial<ReactiveStateData>
+}
+
+export interface RawSpatialPayload {
+  timestamp?: string
+  bridgeStatus?: Partial<BridgeStatus>
+  connection?: Partial<ConnectionStatus>
+  pose?: Partial<PlanarPoseData>
+  poseSources?: Partial<Record<TelemetryPoseSourceKey, Partial<PlanarPoseData>>>
+  lidar?: Partial<SpatialLidarScan>
+  stream?: Partial<SpatialStreamStatus>
 }
 
 export interface RawNetworkTablesPayload {

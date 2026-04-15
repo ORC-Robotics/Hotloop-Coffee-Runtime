@@ -2,6 +2,7 @@ import {
   adaptBackendTelemetry,
   adaptControlModePayload,
   adaptRemoteDriverPayload,
+  adaptSpatialPayload,
   adaptTelemetryCatalogPayload,
 } from './telemetryAdapters'
 import type {
@@ -14,6 +15,7 @@ import type {
   RawBackendTelemetry,
   RawBridgeConnectionPayload,
   RawRemoteDriverPayload,
+  RawSpatialPayload,
   RawTelemetryCatalogPayload,
   RemoteDriverAction,
   RemoteDriverActionCommand,
@@ -21,6 +23,7 @@ import type {
   RemoteDriverResponse,
   RemoteDriverSessionMode,
   RemoteDriverStateCommand,
+  SpatialSnapshot,
   TelemetryCatalogFeed,
   TelemetrySnapshot,
   TopicWriteCommand,
@@ -48,6 +51,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     transport: 'networktables',
     chooserPath: 'SmartDashboard/Auto mode',
     telemetryEndpoint: '/api/telemetry',
+    spatialEndpoint: '/api/spatial',
     controlModeEndpoint: '/api/control-mode',
     topicCatalogEndpoint: '/api/topics',
     topicWriteEndpoint: '/api/topics/write',
@@ -75,6 +79,7 @@ function adaptBridgeConnectionPayload(payload: RawBridgeConnectionPayload): Brid
 const BRIDGE_BASE_URL = resolveBridgeBaseUrl()
 
 const TELEMETRY_URL = `${BRIDGE_BASE_URL}/api/telemetry`
+const SPATIAL_URL = `${BRIDGE_BASE_URL}/api/spatial`
 const CONTROL_MODE_URL = `${BRIDGE_BASE_URL}/api/control-mode`
 const TOPICS_URL = `${BRIDGE_BASE_URL}/api/topics`
 const TOPIC_WRITE_URL = `${BRIDGE_BASE_URL}/api/topics/write`
@@ -97,6 +102,20 @@ export async function getTelemetrySnapshot(): Promise<TelemetrySnapshot> {
   return adaptBackendTelemetry(payload)
 }
 
+export async function getSpatialSnapshot(): Promise<SpatialSnapshot> {
+  const response = await fetch(SPATIAL_URL, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Spatial bridge returned ${response.status}`)
+  }
+
+  const payload = (await response.json()) as RawSpatialPayload
+  return adaptSpatialPayload(payload)
+}
+
 export function subscribeTelemetry(
   onSnapshot: (snapshot: TelemetrySnapshot) => void,
   onError: () => void,
@@ -107,6 +126,37 @@ export function subscribeTelemetry(
   const tick = async () => {
     try {
       const snapshot = await getTelemetrySnapshot()
+      if (!cancelled) {
+        onSnapshot(snapshot)
+      }
+    } catch {
+      if (!cancelled) {
+        onError()
+      }
+    }
+  }
+
+  void tick()
+  const interval = window.setInterval(() => {
+    void tick()
+  }, intervalMs)
+
+  return () => {
+    cancelled = true
+    window.clearInterval(interval)
+  }
+}
+
+export function subscribeSpatialTelemetry(
+  onSnapshot: (snapshot: SpatialSnapshot) => void,
+  onError: () => void,
+  intervalMs: number,
+) {
+  let cancelled = false
+
+  const tick = async () => {
+    try {
+      const snapshot = await getSpatialSnapshot()
       if (!cancelled) {
         onSnapshot(snapshot)
       }

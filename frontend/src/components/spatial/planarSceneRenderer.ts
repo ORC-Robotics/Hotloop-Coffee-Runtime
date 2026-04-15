@@ -14,6 +14,19 @@ export interface PlanarScenePalette {
   robotFill: string
   robotStroke: string
   heading: string
+  lidarSweep: string
+  lidarPoint: string
+  lidarGhost: string
+  observedMapPoint: string
+  observedMapRecent: string
+  occupancyFree: string
+  occupancyOccupied: string
+  occupancyMixed: string
+  goalReady: string
+  goalArmed: string
+  goalBlocked: string
+  registrationSweep: string
+  registrationPoint: string
 }
 
 export interface PlanarSceneViewport {
@@ -40,6 +53,85 @@ export interface PlanarScenePose {
   source: string
 }
 
+export interface PlanarSceneLidarPoint {
+  xMm: number
+  yMm: number
+  angleDeg: number
+  distanceMm: number
+}
+
+export interface PlanarSceneLidar {
+  freshness: PlanarPoseFreshness
+  frame: string
+  poseFrame: string
+  points: PlanarSceneLidarPoint[]
+}
+
+export interface PlanarSceneBufferedLidar {
+  freshness: PlanarPoseFreshness
+  frame: string
+  poseFrame: string
+  pose: PlanarScenePose
+  points: PlanarSceneLidarPoint[]
+}
+
+export interface PlanarSceneObservedMapPoint {
+  xMm: number
+  yMm: number
+}
+
+export interface PlanarSceneObservedMapScan {
+  timestampMs: number
+  sequence: number
+  frame: string
+  pointCount: number
+  points: PlanarSceneObservedMapPoint[]
+}
+
+export interface PlanarSceneObservedMap {
+  frame: string
+  fadeOlderScans: boolean
+  scans: PlanarSceneObservedMapScan[]
+}
+
+export interface PlanarSceneOccupancyCell {
+  centerXMm: number
+  centerYMm: number
+  freeCount: number
+  occupiedCount: number
+  state: 'free' | 'occupied' | 'mixed'
+  confidence: number
+}
+
+export interface PlanarSceneOccupancyLayer {
+  frame: string
+  cellSizeMm: number
+  cells: PlanarSceneOccupancyCell[]
+}
+
+export type PlanarSceneGoalPreviewStatus = 'ready' | 'armed' | 'blocked' | 'unreachable'
+
+export interface PlanarSceneGoalPreviewPoint {
+  xMm: number
+  yMm: number
+}
+
+export interface PlanarSceneGoalPreview {
+  status: PlanarSceneGoalPreviewStatus
+  requestedXMm: number
+  requestedYMm: number
+  targetXMm: number | null
+  targetYMm: number | null
+  path: PlanarSceneGoalPreviewPoint[]
+}
+
+export type PlanarSceneRegistrationQuality = 'good' | 'fair' | 'poor' | 'insufficient'
+
+export interface PlanarSceneRegistration {
+  quality: PlanarSceneRegistrationQuality
+  points: PlanarSceneLidarPoint[]
+}
+
 export interface PlanarSceneModel {
   widthPx: number
   heightPx: number
@@ -47,6 +139,12 @@ export interface PlanarSceneModel {
   palette: PlanarScenePalette
   trail: PlanarSceneTrailPoint[]
   pose: PlanarScenePose | null
+  observedMap: PlanarSceneObservedMap | null
+  occupancy: PlanarSceneOccupancyLayer | null
+  goalPreview: PlanarSceneGoalPreview | null
+  lidarHistory: PlanarSceneBufferedLidar[]
+  lidar: PlanarSceneLidar | null
+  registration: PlanarSceneRegistration | null
 }
 
 function worldToScreen(
@@ -217,6 +315,304 @@ function drawTrail(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
   ctx.restore()
 }
 
+function drawObservedMap(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
+  if (!scene.observedMap || scene.observedMap.scans.length === 0) {
+    return
+  }
+
+  const totalScans = scene.observedMap.scans.length
+
+  ctx.save()
+
+  scene.observedMap.scans.forEach((scan, index) => {
+    const ageRatio = totalScans <= 1 ? 1 : (index + 1) / totalScans
+    const opacity = scene.observedMap.fadeOlderScans ? 0.08 + ageRatio * 0.48 : 0.32
+    const pointRadius = scene.observedMap.fadeOlderScans ? 1.05 + ageRatio * 0.85 : 1.7
+
+    ctx.fillStyle =
+      index === totalScans - 1 ? scene.palette.observedMapRecent : scene.palette.observedMapPoint
+    ctx.globalAlpha = opacity
+
+    scan.points.forEach((point) => {
+      const screen = worldToScreen(point.xMm, point.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, pointRadius, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  })
+
+  ctx.restore()
+}
+
+function drawOccupancyLayer(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
+  if (!scene.occupancy || scene.occupancy.cells.length === 0) {
+    return
+  }
+
+  const cellSizePx = scene.occupancy.cellSizeMm * scene.viewport.zoomPxPerMm
+  if (cellSizePx <= 0.5) {
+    return
+  }
+
+  const halfCellPx = cellSizePx / 2
+  const shouldStroke = cellSizePx >= 14
+
+  ctx.save()
+  ctx.lineWidth = 1
+
+  scene.occupancy.cells.forEach((cell) => {
+    const screen = worldToScreen(
+      cell.centerXMm,
+      cell.centerYMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const alpha =
+      cell.state === 'occupied'
+        ? 0.18 + cell.confidence * 0.38
+        : cell.state === 'free'
+          ? 0.08 + cell.confidence * 0.18
+          : 0.12 + cell.confidence * 0.26
+
+    ctx.globalAlpha = alpha
+    ctx.fillStyle =
+      cell.state === 'occupied'
+        ? scene.palette.occupancyOccupied
+        : cell.state === 'free'
+          ? scene.palette.occupancyFree
+          : scene.palette.occupancyMixed
+    ctx.fillRect(screen.x - halfCellPx, screen.y - halfCellPx, cellSizePx, cellSizePx)
+
+    if (shouldStroke) {
+      ctx.globalAlpha = Math.min(0.5, alpha + 0.08)
+      ctx.strokeStyle = scene.palette.gridMinor
+      ctx.strokeRect(screen.x - halfCellPx, screen.y - halfCellPx, cellSizePx, cellSizePx)
+    }
+  })
+
+  ctx.restore()
+}
+
+function drawGoalPreview(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
+  if (!scene.goalPreview) {
+    return
+  }
+
+  const preview = scene.goalPreview
+  const targetXMm = preview.targetXMm ?? preview.requestedXMm
+  const targetYMm = preview.targetYMm ?? preview.requestedYMm
+  const targetScreen = worldToScreen(
+    targetXMm,
+    targetYMm,
+    scene.viewport,
+    scene.widthPx,
+    scene.heightPx,
+  )
+  const requestedScreen = worldToScreen(
+    preview.requestedXMm,
+    preview.requestedYMm,
+    scene.viewport,
+    scene.widthPx,
+    scene.heightPx,
+  )
+  const accent =
+    preview.status === 'armed'
+      ? scene.palette.goalArmed
+      : preview.status === 'ready'
+        ? scene.palette.goalReady
+        : scene.palette.goalBlocked
+
+  ctx.save()
+
+  if (preview.path.length >= 2) {
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2.2
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.setLineDash(preview.status === 'armed' ? [] : [10, 8])
+    ctx.globalAlpha = preview.status === 'armed' ? 0.92 : 0.76
+    ctx.beginPath()
+
+    preview.path.forEach((point, index) => {
+      const screen = worldToScreen(point.xMm, point.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+      if (index === 0) {
+        ctx.moveTo(screen.x, screen.y)
+        return
+      }
+
+      ctx.lineTo(screen.x, screen.y)
+    })
+
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  if (
+    preview.targetXMm !== null &&
+    preview.targetYMm !== null &&
+    (preview.targetXMm !== preview.requestedXMm || preview.targetYMm !== preview.requestedYMm)
+  ) {
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 1.2
+    ctx.setLineDash([4, 6])
+    ctx.globalAlpha = 0.5
+    ctx.beginPath()
+    ctx.moveTo(requestedScreen.x, requestedScreen.y)
+    ctx.lineTo(targetScreen.x, targetScreen.y)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2
+  ctx.globalAlpha = 0.95
+  ctx.beginPath()
+  ctx.arc(targetScreen.x, targetScreen.y, 11, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(targetScreen.x, targetScreen.y, 4, 0, Math.PI * 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.moveTo(targetScreen.x - 16, targetScreen.y)
+  ctx.lineTo(targetScreen.x + 16, targetScreen.y)
+  ctx.moveTo(targetScreen.x, targetScreen.y - 16)
+  ctx.lineTo(targetScreen.x, targetScreen.y + 16)
+  ctx.stroke()
+
+  if (preview.targetXMm !== null && preview.targetYMm !== null) {
+    ctx.globalAlpha = 0.72
+    ctx.fillStyle = accent
+    ctx.beginPath()
+    ctx.arc(requestedScreen.x, requestedScreen.y, 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.restore()
+}
+
+function drawLidarScan(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanarSceneModel,
+  pose: PlanarScenePose,
+  lidar: PlanarSceneLidar,
+  opacityScale = 1,
+  pointRadius = 2.3,
+) {
+  if (lidar.points.length === 0) {
+    return
+  }
+
+  ctx.save()
+  ctx.strokeStyle = scene.palette.lidarSweep
+  ctx.fillStyle =
+    lidar.freshness === 'stale' ? scene.palette.lidarGhost : scene.palette.lidarPoint
+  ctx.lineWidth = 1.75
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  ctx.globalAlpha = (lidar.freshness === 'stale' ? 0.44 : 0.84) * opacityScale
+  ctx.beginPath()
+
+  lidar.points.forEach((point, index) => {
+    const world = robotLocalToWorld(pose, point.xMm, point.yMm)
+    const screen = worldToScreen(world.xMm, world.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+
+    if (index === 0) {
+      ctx.moveTo(screen.x, screen.y)
+      return
+    }
+
+    ctx.lineTo(screen.x, screen.y)
+  })
+
+  ctx.stroke()
+
+  lidar.points.forEach((point) => {
+    const world = robotLocalToWorld(pose, point.xMm, point.yMm)
+    const screen = worldToScreen(world.xMm, world.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+    ctx.beginPath()
+    ctx.arc(screen.x, screen.y, pointRadius, 0, Math.PI * 2)
+    ctx.fill()
+  })
+
+  ctx.restore()
+}
+
+function drawLidarHistory(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
+  if (scene.lidarHistory.length === 0) {
+    return
+  }
+
+  scene.lidarHistory.forEach((historyScan, index) => {
+    const opacityScale = 0.14 + ((index + 1) / scene.lidarHistory.length) * 0.28
+
+    drawLidarScan(
+      ctx,
+      scene,
+      historyScan.pose,
+      {
+        freshness: historyScan.freshness,
+        frame: historyScan.frame,
+        poseFrame: historyScan.poseFrame,
+        points: historyScan.points,
+      },
+      opacityScale,
+      1.8,
+    )
+  })
+}
+
+function drawRegistrationOverlay(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanarSceneModel,
+  pose: PlanarScenePose,
+  registration: PlanarSceneRegistration,
+) {
+  if (registration.points.length === 0) {
+    return
+  }
+
+  const opacityScale =
+    registration.quality === 'good'
+      ? 0.62
+      : registration.quality === 'fair'
+        ? 0.5
+        : 0.4
+
+  ctx.save()
+  ctx.strokeStyle = scene.palette.registrationSweep
+  ctx.fillStyle = scene.palette.registrationPoint
+  ctx.lineWidth = 1.4
+  ctx.globalAlpha = opacityScale
+  ctx.beginPath()
+
+  registration.points.forEach((point, index) => {
+    const world = robotLocalToWorld(pose, point.xMm, point.yMm)
+    const screen = worldToScreen(world.xMm, world.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+
+    if (index === 0) {
+      ctx.moveTo(screen.x, screen.y)
+      return
+    }
+
+    ctx.lineTo(screen.x, screen.y)
+  })
+
+  ctx.stroke()
+
+  registration.points.forEach((point) => {
+    const world = robotLocalToWorld(pose, point.xMm, point.yMm)
+    const screen = worldToScreen(world.xMm, world.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+    ctx.beginPath()
+    ctx.arc(screen.x, screen.y, 2, 0, Math.PI * 2)
+    ctx.fill()
+  })
+
+  ctx.restore()
+}
+
 function drawRobotBody(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel, pose: PlanarScenePose) {
   const bodyPoints = [
     { xMm: 0, yMm: 220 },
@@ -295,11 +691,26 @@ export function drawPlanarScene(ctx: CanvasRenderingContext2D, scene: PlanarScen
 
   drawGrid(ctx, scene)
   drawAxes(ctx, scene)
-  drawTrail(ctx, scene)
+  drawOccupancyLayer(ctx, scene)
+  drawObservedMap(ctx, scene)
+  drawGoalPreview(ctx, scene)
 
   if (scene.pose) {
+    drawLidarHistory(ctx, scene)
+
+    if (scene.registration) {
+      drawRegistrationOverlay(ctx, scene, scene.pose, scene.registration)
+    }
+
+    if (scene.lidar) {
+      drawLidarScan(ctx, scene, scene.pose, scene.lidar)
+    }
+
+    drawTrail(ctx, scene)
     drawRobotBody(ctx, scene, scene.pose)
     drawHeadingMarker(ctx, scene, scene.pose)
+  } else {
+    drawTrail(ctx, scene)
   }
 
   ctx.restore()

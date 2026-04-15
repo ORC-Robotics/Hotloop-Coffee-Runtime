@@ -1,11 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clamp } from '../lib/format'
 import {
+  computeSpatialScanRegistration,
+  decodeSpatialLidarPoints,
+  inspectSpatialLidar,
   isRenderablePlanarPose,
+  SPATIAL_LIDAR_SENSOR_OFFSET_X_MM,
+  SPATIAL_LIDAR_SENSOR_OFFSET_Y_MM,
+  type SpatialBufferedLidarSampleLike,
+  type SpatialLidarDiagnostics,
+  type SpatialLidarLocalPoint,
+  type SpatialScanRegistration,
+  resolveSpatialLidar,
   resolveSpatialPose,
+  type ResolvedSpatialLidar,
   type ResolvedSpatialPose,
 } from '../lib/spatialTelemetry'
-import type { PlanarPoseData, PoseSourceOverride, TelemetrySnapshot } from '../types/telemetry'
+import type {
+  PlanarPoseData,
+  PlanarPoseFreshness,
+  PoseSourceOverride,
+  SpatialSnapshot,
+} from '../types/telemetry'
 
 const DEFAULT_VIEWPORT = {
   centerXMm: 0,
@@ -18,6 +34,16 @@ const MAX_ZOOM_PX_PER_MM = 0.72
 const TRAIL_MAX_POINTS = 720
 const TRAIL_APPEND_DISTANCE_MM = 24
 const TRAIL_APPEND_YAW_DEG = 3
+const LIDAR_HISTORY_MAX_SCANS = 12
+const OBSERVED_MAP_HISTORY_LIMIT_DEFAULT = 48
+const OBSERVED_MAP_HISTORY_LIMIT_OPTIONS = [24, 48, 96] as const
+const OCCUPANCY_CELL_SIZE_DEFAULT_MM = 80
+const OCCUPANCY_CELL_SIZE_OPTIONS_MM = [60, 80, 120, 160] as const
+const GOAL_PREVIEW_TARGET_SNAP_RADIUS_CELLS = 2
+const GOAL_PREVIEW_START_SNAP_RADIUS_CELLS = 3
+const GOAL_PREVIEW_CLEARANCE_MM = 140
+const GOAL_PREVIEW_MAX_SEARCH_EXPANSIONS = 18_000
+const GOAL_PREVIEW_MIXED_CELL_COST = 1.8
 
 export interface SpatialTrailPoint {
   xMm: number
@@ -51,17 +77,163 @@ export interface SpatialPoseTransitionState {
   transitionMs: number
 }
 
+export interface SpatialBufferedLidarScan {
+  timestampMs: number
+  sequence: number
+  frame: string
+  poseFrame: string
+  freshness: PlanarPoseFreshness
+  pose: Pick<PlanarPoseData, 'xMm' | 'yMm' | 'yawDeg' | 'frame' | 'source'>
+  points: SpatialLidarLocalPoint[]
+}
+
+export interface SpatialObservedMapPoint {
+  xMm: number
+  yMm: number
+}
+
+export interface SpatialObservedMapScan {
+  timestampMs: number
+  sequence: number
+  frame: string
+  poseFrame: string
+  source: PlanarPoseData['source']
+  originXMm: number
+  originYMm: number
+  pointCount: number
+  points: SpatialObservedMapPoint[]
+}
+
+export type SpatialOccupancyDisplayMode = 'occupied-only' | 'free-and-occupied'
+
+export interface SpatialOccupancyCell {
+  gridX: number
+  gridY: number
+  centerXMm: number
+  centerYMm: number
+  freeCount: number
+  occupiedCount: number
+  state: 'free' | 'occupied' | 'mixed'
+  confidence: number
+}
+
+export interface SpatialOccupancyLayer {
+  frame: string
+  cellSizeMm: number
+  cells: SpatialOccupancyCell[]
+  freeCellCount: number
+  occupiedCellCount: number
+  mixedCellCount: number
+}
+
+export type SpatialReplayMode = 'live' | 'history'
+
+export interface SpatialReplaySelection {
+  key: string
+  index: number
+  total: number
+  ageMs: number | null
+  scan: SpatialBufferedLidarScan
+}
+
+export interface SpatialPathPreviewPoint {
+  xMm: number
+  yMm: number
+}
+
+export type SpatialGoalPreviewStatus =
+  | 'idle'
+  | 'ready'
+  | 'armed'
+  | 'blocked'
+  | 'unreachable'
+  | 'unavailable'
+
+export interface SpatialGoalPreviewTarget {
+  requestedXMm: number
+  requestedYMm: number
+  snappedXMm: number
+  snappedYMm: number
+  gridX: number
+  gridY: number
+  cellState: 'free' | 'mixed'
+  confidence: number
+  snapDistanceMm: number
+}
+
+export interface SpatialGoalPreview {
+  status: SpatialGoalPreviewStatus
+  message: string
+  frame: string
+  requestedXMm: number | null
+  requestedYMm: number | null
+  target: SpatialGoalPreviewTarget | null
+  path: SpatialPathPreviewPoint[]
+  waypointCount: number
+  directDistanceMm: number | null
+  pathLengthMm: number | null
+  safetyBufferMm: number
+}
+
+interface SpatialGoalRequest {
+  xMm: number
+  yMm: number
+}
+
+interface SpatialGoalPlannerGrid {
+  frame: string
+  cellSizeMm: number
+  cellsByKey: Map<string, SpatialOccupancyCell>
+  blockedKeys: Set<string>
+}
+
 export interface SpatialViewModel {
   sourceOverride: PoseSourceOverride
   setSourceOverride: (override: PoseSourceOverride) => void
   selectedPose: ResolvedSpatialPose
-  sourceStates: TelemetrySnapshot['poseSources']
+  selectedLidar: ResolvedSpatialLidar
+  lidarDiagnostics: SpatialLidarDiagnostics
+  scanRegistration: SpatialScanRegistration
+  sourceStates: SpatialSnapshot['poseSources']
   trail: SpatialTrailPoint[]
+  displayTrail: SpatialTrailPoint[]
+  lidarHistory: SpatialBufferedLidarScan[]
+  displayLidarHistory: SpatialBufferedLidarScan[]
+  observedMapScans: SpatialObservedMapScan[]
+  displayObservedMapScans: SpatialObservedMapScan[]
+  occupancySessionScanCount: number
+  observedMapFrozen: boolean
+  observedMapFadeOlderScans: boolean
+  observedMapHistoryLimit: number
+  observedMapHistoryLimitOptions: readonly number[]
+  showOccupancyLayer: boolean
+  toggleOccupancyLayer: () => void
+  occupancyCellSizeMm: number
+  occupancyCellSizeOptionsMm: readonly number[]
+  setOccupancyCellSizeMm: (cellSizeMm: number) => void
+  occupancyDisplayMode: SpatialOccupancyDisplayMode
+  toggleOccupancyDisplayMode: () => void
+  occupancyLayer: SpatialOccupancyLayer | null
+  goalPreview: SpatialGoalPreview
+  selectGoalAtWorldPoint: (point: SpatialPathPreviewPoint) => void
+  armGoalPreview: () => void
+  disarmGoalPreview: () => void
+  clearGoalPreview: () => void
+  replayMode: SpatialReplayMode
+  replaySelection: SpatialReplaySelection | null
   viewport: SpatialViewportState
   poseTransition: SpatialPoseTransitionState
   centerOnRobot: () => void
   resetView: () => void
   clearTrail: () => void
+  clearLidarHistory: () => void
+  clearObservedMap: () => void
+  toggleObservedMapFrozen: () => void
+  toggleObservedMapFadeOlderScans: () => void
+  setObservedMapHistoryLimit: (limit: number) => void
+  enterReplayAtIndex: (index: number) => void
+  stepReplay: (delta: number) => void
+  returnToLive: () => void
   panViewport: (deltaXPx: number, deltaYPx: number) => void
   zoomViewport: (factor: number, anchor: SpatialAnchorPoint, viewportSize: SpatialViewportSize) => void
 }
@@ -119,10 +291,649 @@ function poseTransitionChanged(previous: PlanarPoseData | null, next: PlanarPose
   )
 }
 
-export function useSpatialViewModel(snapshot: TelemetrySnapshot): SpatialViewModel {
+function bufferedLidarKey(scan: SpatialBufferedLidarScan) {
+  return `${scan.sequence}:${scan.timestampMs}:${scan.poseFrame}:${scan.frame}`
+}
+
+function replayPoseFromScan(scan: SpatialBufferedLidarScan): PlanarPoseData {
+  return {
+    available: true,
+    source: scan.pose.source,
+    xMm: scan.pose.xMm,
+    yMm: scan.pose.yMm,
+    yawDeg: scan.pose.yawDeg,
+    timestampMs: scan.timestampMs,
+    sequence: scan.sequence,
+    freshness: scan.freshness === 'invalid' ? 'stale' : scan.freshness,
+    frame: scan.pose.frame,
+  }
+}
+
+function liveScanFromSelection(
+  selectedLidar: ResolvedSpatialLidar,
+  selectedPose: ResolvedSpatialPose,
+): SpatialBufferedLidarScan | null {
+  if (!selectedLidar.isRenderable || !selectedPose.isRenderable) {
+    return null
+  }
+
+  const points = decodeSpatialLidarPoints(selectedLidar.scan)
+  if (points.length === 0) {
+    return null
+  }
+
+  return {
+    timestampMs: selectedLidar.scan.timestampMs,
+    sequence: selectedLidar.scan.sequence,
+    frame: selectedLidar.scan.frame,
+    poseFrame: selectedLidar.scan.poseFrame,
+    freshness: selectedLidar.scan.freshness,
+    pose: {
+      xMm: selectedPose.pose.xMm,
+      yMm: selectedPose.pose.yMm,
+      yawDeg: selectedPose.pose.yawDeg,
+      frame: selectedPose.pose.frame,
+      source: selectedPose.pose.source,
+    },
+    points,
+  }
+}
+
+function robotLocalPointToWorld(
+  point: Pick<SpatialLidarLocalPoint, 'xMm' | 'yMm'>,
+  pose: Pick<PlanarPoseData, 'xMm' | 'yMm' | 'yawDeg'>,
+) {
+  const headingRad = (pose.yawDeg * Math.PI) / 180
+
+  return {
+    xMm: pose.xMm + point.xMm * Math.cos(headingRad) + point.yMm * Math.sin(headingRad),
+    yMm: pose.yMm + point.yMm * Math.cos(headingRad) - point.xMm * Math.sin(headingRad),
+  }
+}
+
+function occupancyCellKey(gridX: number, gridY: number) {
+  return `${gridX}:${gridY}`
+}
+
+function occupancyCellIndices(xMm: number, yMm: number, cellSizeMm: number) {
+  return {
+    gridX: Math.floor(xMm / cellSizeMm),
+    gridY: Math.floor(yMm / cellSizeMm),
+  }
+}
+
+function occupancyCellCenterMm(gridX: number, gridY: number, cellSizeMm: number) {
+  return {
+    centerXMm: (gridX + 0.5) * cellSizeMm,
+    centerYMm: (gridY + 0.5) * cellSizeMm,
+  }
+}
+
+function computeOccupancyLayer(
+  scans: SpatialObservedMapScan[],
+  cellSizeMm: number,
+  displayMode: SpatialOccupancyDisplayMode,
+): SpatialOccupancyLayer | null {
+  if (scans.length === 0) {
+    return null
+  }
+
+  const cells = new Map<string, { gridX: number; gridY: number; freeCount: number; occupiedCount: number }>()
+  const stepLengthMm = Math.max(20, cellSizeMm * 0.45)
+
+  scans.forEach((scan) => {
+    scan.points.forEach((point) => {
+      const dxMm = point.xMm - scan.originXMm
+      const dyMm = point.yMm - scan.originYMm
+      const distanceMm = Math.hypot(dxMm, dyMm)
+      const freeVisited = new Set<string>()
+
+      if (distanceMm > 1) {
+        const steps = Math.max(1, Math.ceil(distanceMm / stepLengthMm))
+        for (let stepIndex = 0; stepIndex < steps; stepIndex += 1) {
+          const t = stepIndex / steps
+          const sampleXMm = scan.originXMm + dxMm * t
+          const sampleYMm = scan.originYMm + dyMm * t
+          const { gridX, gridY } = occupancyCellIndices(sampleXMm, sampleYMm, cellSizeMm)
+          const key = occupancyCellKey(gridX, gridY)
+          if (freeVisited.has(key)) {
+            continue
+          }
+
+          freeVisited.add(key)
+          const current = cells.get(key) ?? { gridX, gridY, freeCount: 0, occupiedCount: 0 }
+          current.freeCount += 1
+          cells.set(key, current)
+        }
+      }
+
+      const occupiedIndices = occupancyCellIndices(point.xMm, point.yMm, cellSizeMm)
+      const occupiedKey = occupancyCellKey(occupiedIndices.gridX, occupiedIndices.gridY)
+      const occupiedCell =
+        cells.get(occupiedKey) ??
+        {
+          gridX: occupiedIndices.gridX,
+          gridY: occupiedIndices.gridY,
+          freeCount: 0,
+          occupiedCount: 0,
+        }
+      occupiedCell.occupiedCount += 3
+      cells.set(occupiedKey, occupiedCell)
+    })
+  })
+
+  const layerCells: SpatialOccupancyCell[] = []
+  let freeCellCount = 0
+  let occupiedCellCount = 0
+  let mixedCellCount = 0
+
+  cells.forEach((cell) => {
+    const total = cell.freeCount + cell.occupiedCount
+    if (total <= 0) {
+      return
+    }
+
+    const occupiedRatio = cell.occupiedCount / total
+    const freeRatio = cell.freeCount / total
+    const state =
+      occupiedRatio >= 0.58
+        ? 'occupied'
+        : freeRatio >= 0.72
+          ? 'free'
+          : 'mixed'
+
+    if (displayMode === 'occupied-only' && state === 'free') {
+      return
+    }
+
+    if (state === 'occupied') {
+      occupiedCellCount += 1
+    } else if (state === 'free') {
+      freeCellCount += 1
+    } else {
+      mixedCellCount += 1
+    }
+
+    const center = occupancyCellCenterMm(cell.gridX, cell.gridY, cellSizeMm)
+    layerCells.push({
+      gridX: cell.gridX,
+      gridY: cell.gridY,
+      centerXMm: center.centerXMm,
+      centerYMm: center.centerYMm,
+      freeCount: cell.freeCount,
+      occupiedCount: cell.occupiedCount,
+      state,
+      confidence: Math.min(1, total / 10),
+    })
+  })
+
+  if (layerCells.length === 0) {
+    return null
+  }
+
+  return {
+    frame: scans[scans.length - 1]?.frame ?? 'none',
+    cellSizeMm,
+    cells: layerCells,
+    freeCellCount,
+    occupiedCellCount,
+    mixedCellCount,
+  }
+}
+
+function buildGoalPlannerGrid(layer: SpatialOccupancyLayer | null): SpatialGoalPlannerGrid | null {
+  if (!layer || layer.cells.length === 0) {
+    return null
+  }
+
+  const cellsByKey = new Map<string, SpatialOccupancyCell>()
+  layer.cells.forEach((cell) => {
+    cellsByKey.set(occupancyCellKey(cell.gridX, cell.gridY), cell)
+  })
+
+  const blockedKeys = new Set<string>()
+  const inflationRadiusCells = Math.max(1, Math.floor(GOAL_PREVIEW_CLEARANCE_MM / layer.cellSizeMm))
+
+  layer.cells.forEach((cell) => {
+    if (cell.state !== 'occupied') {
+      return
+    }
+
+    for (let deltaX = -inflationRadiusCells; deltaX <= inflationRadiusCells; deltaX += 1) {
+      for (let deltaY = -inflationRadiusCells; deltaY <= inflationRadiusCells; deltaY += 1) {
+        if (Math.hypot(deltaX, deltaY) > inflationRadiusCells) {
+          continue
+        }
+
+        blockedKeys.add(occupancyCellKey(cell.gridX + deltaX, cell.gridY + deltaY))
+      }
+    }
+  })
+
+  return {
+    frame: layer.frame,
+    cellSizeMm: layer.cellSizeMm,
+    cellsByKey,
+    blockedKeys,
+  }
+}
+
+function plannerCellTraversable(grid: SpatialGoalPlannerGrid, key: string) {
+  const cell = grid.cellsByKey.get(key)
+  if (!cell) {
+    return false
+  }
+
+  if (cell.state === 'occupied') {
+    return false
+  }
+
+  return !grid.blockedKeys.has(key)
+}
+
+function findNearestPlannerCell(
+  grid: SpatialGoalPlannerGrid,
+  xMm: number,
+  yMm: number,
+  maxRadiusCells: number,
+) {
+  const baseIndices = occupancyCellIndices(xMm, yMm, grid.cellSizeMm)
+
+  for (let radius = 0; radius <= maxRadiusCells; radius += 1) {
+    let bestCell: SpatialOccupancyCell | null = null
+    let bestScore = Number.POSITIVE_INFINITY
+
+    for (let deltaX = -radius; deltaX <= radius; deltaX += 1) {
+      for (let deltaY = -radius; deltaY <= radius; deltaY += 1) {
+        const key = occupancyCellKey(baseIndices.gridX + deltaX, baseIndices.gridY + deltaY)
+        if (!plannerCellTraversable(grid, key)) {
+          continue
+        }
+
+        const candidate = grid.cellsByKey.get(key)
+        if (!candidate) {
+          continue
+        }
+
+        const distanceMm = Math.hypot(candidate.centerXMm - xMm, candidate.centerYMm - yMm)
+        const score =
+          distanceMm + (candidate.state === 'mixed' ? grid.cellSizeMm * 0.8 : 0)
+
+        if (score < bestScore) {
+          bestCell = candidate
+          bestScore = score
+        }
+      }
+    }
+
+    if (bestCell) {
+      return bestCell
+    }
+  }
+
+  return null
+}
+
+function simplifyPlannerCellPath(path: SpatialOccupancyCell[]) {
+  if (path.length <= 2) {
+    return path
+  }
+
+  const simplified = [path[0]]
+
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const previous = simplified[simplified.length - 1]
+    const current = path[index]
+    const next = path[index + 1]
+
+    const previousDirection = {
+      x: Math.sign(current.gridX - previous.gridX),
+      y: Math.sign(current.gridY - previous.gridY),
+    }
+    const nextDirection = {
+      x: Math.sign(next.gridX - current.gridX),
+      y: Math.sign(next.gridY - current.gridY),
+    }
+
+    if (previousDirection.x === nextDirection.x && previousDirection.y === nextDirection.y) {
+      continue
+    }
+
+    simplified.push(current)
+  }
+
+  simplified.push(path[path.length - 1])
+  return simplified
+}
+
+function computePathLengthMm(points: SpatialPathPreviewPoint[]) {
+  if (points.length < 2) {
+    return 0
+  }
+
+  let totalMm = 0
+  for (let index = 1; index < points.length; index += 1) {
+    totalMm += Math.hypot(
+      points[index].xMm - points[index - 1].xMm,
+      points[index].yMm - points[index - 1].yMm,
+    )
+  }
+
+  return totalMm
+}
+
+function buildGoalPreviewUnavailable(
+  status: Extract<SpatialGoalPreviewStatus, 'idle' | 'blocked' | 'unreachable' | 'unavailable'>,
+  message: string,
+  request: SpatialGoalRequest | null,
+  frame = 'none',
+): SpatialGoalPreview {
+  return {
+    status,
+    message,
+    frame,
+    requestedXMm: request?.xMm ?? null,
+    requestedYMm: request?.yMm ?? null,
+    target: null,
+    path: [],
+    waypointCount: 0,
+    directDistanceMm: null,
+    pathLengthMm: null,
+    safetyBufferMm: GOAL_PREVIEW_CLEARANCE_MM,
+  }
+}
+
+function computeGoalPreview(
+  request: SpatialGoalRequest | null,
+  armed: boolean,
+  pose: PlanarPoseData,
+  grid: SpatialGoalPlannerGrid | null,
+): SpatialGoalPreview {
+  if (!request) {
+    return buildGoalPreviewUnavailable(
+      'idle',
+      'Click a visited free area to preview a desktop-side route through the current occupancy layer.',
+      null,
+      grid?.frame ?? pose.frame,
+    )
+  }
+
+  if (!isRenderablePlanarPose(pose)) {
+    return buildGoalPreviewUnavailable(
+      'unavailable',
+      'Need a valid planar pose before the goal preview can resolve a start cell.',
+      request,
+    )
+  }
+
+  if (!grid) {
+    return buildGoalPreviewUnavailable(
+      'unavailable',
+      'Need occupancy coverage before the goal preview can evaluate a reachable target.',
+      request,
+      pose.frame,
+    )
+  }
+
+  if (pose.frame !== grid.frame) {
+    return buildGoalPreviewUnavailable(
+      'unavailable',
+      'The selected pose frame no longer matches the active occupancy frame.',
+      request,
+      grid.frame,
+    )
+  }
+
+  const startCell = findNearestPlannerCell(
+    grid,
+    pose.xMm,
+    pose.yMm,
+    GOAL_PREVIEW_START_SNAP_RADIUS_CELLS,
+  )
+
+  if (!startCell) {
+    return buildGoalPreviewUnavailable(
+      'unavailable',
+      'The robot is not currently sitting inside a traversable free-space island in the desktop occupancy layer.',
+      request,
+      grid.frame,
+    )
+  }
+
+  const targetCell = findNearestPlannerCell(
+    grid,
+    request.xMm,
+    request.yMm,
+    GOAL_PREVIEW_TARGET_SNAP_RADIUS_CELLS,
+  )
+
+  if (!targetCell) {
+    return buildGoalPreviewUnavailable(
+      'blocked',
+      'The clicked point is outside the mapped free space or too close to an occupied safety buffer.',
+      request,
+      grid.frame,
+    )
+  }
+
+  const startKey = occupancyCellKey(startCell.gridX, startCell.gridY)
+  const goalKey = occupancyCellKey(targetCell.gridX, targetCell.gridY)
+  const heuristic = (cell: SpatialOccupancyCell) =>
+    Math.hypot(targetCell.gridX - cell.gridX, targetCell.gridY - cell.gridY) * grid.cellSizeMm
+
+  const openKeys = new Set<string>([startKey])
+  const cameFrom = new Map<string, string>()
+  const gScore = new Map<string, number>([[startKey, 0]])
+  const fScore = new Map<string, number>([[startKey, heuristic(startCell)]])
+  let expandedNodes = 0
+
+  while (openKeys.size > 0 && expandedNodes < GOAL_PREVIEW_MAX_SEARCH_EXPANSIONS) {
+    let currentKey: string | null = null
+    let currentScore = Number.POSITIVE_INFINITY
+
+    openKeys.forEach((key) => {
+      const score = fScore.get(key) ?? Number.POSITIVE_INFINITY
+      if (score < currentScore) {
+        currentScore = score
+        currentKey = key
+      }
+    })
+
+    if (!currentKey) {
+      break
+    }
+
+    if (currentKey === goalKey) {
+      const pathCells: SpatialOccupancyCell[] = []
+      let cursor: string | null = currentKey
+
+      while (cursor) {
+        const cell = grid.cellsByKey.get(cursor)
+        if (!cell) {
+          break
+        }
+
+        pathCells.unshift(cell)
+        cursor = cameFrom.get(cursor) ?? null
+      }
+
+      const simplifiedPath = simplifyPlannerCellPath(pathCells)
+      const path: SpatialPathPreviewPoint[] = [{ xMm: pose.xMm, yMm: pose.yMm }]
+
+      simplifiedPath.slice(1).forEach((cell) => {
+        path.push({
+          xMm: cell.centerXMm,
+          yMm: cell.centerYMm,
+        })
+      })
+
+      const lastPathPoint = path[path.length - 1]
+      if (
+        !lastPathPoint ||
+        Math.hypot(lastPathPoint.xMm - targetCell.centerXMm, lastPathPoint.yMm - targetCell.centerYMm) > 1
+      ) {
+        path.push({
+          xMm: targetCell.centerXMm,
+          yMm: targetCell.centerYMm,
+        })
+      }
+
+      const target = {
+        requestedXMm: request.xMm,
+        requestedYMm: request.yMm,
+        snappedXMm: targetCell.centerXMm,
+        snappedYMm: targetCell.centerYMm,
+        gridX: targetCell.gridX,
+        gridY: targetCell.gridY,
+        cellState: targetCell.state === 'mixed' ? 'mixed' : 'free',
+        confidence: targetCell.confidence,
+        snapDistanceMm: Math.hypot(
+          targetCell.centerXMm - request.xMm,
+          targetCell.centerYMm - request.yMm,
+        ),
+      } satisfies SpatialGoalPreviewTarget
+
+      return {
+        status: armed ? 'armed' : 'ready',
+        message:
+          armed
+            ? 'Goal preview armed locally. No robot command is sent yet; this is ready for the guided-navigation execution phase.'
+            : target.snapDistanceMm > grid.cellSizeMm * 0.4
+              ? `Preview path computed. The click was snapped ${Math.round(target.snapDistanceMm)} mm to the nearest traversable cell. Press N to arm it.`
+              : 'Preview path computed. Press N to arm this target locally or Esc to clear it.',
+        frame: grid.frame,
+        requestedXMm: request.xMm,
+        requestedYMm: request.yMm,
+        target,
+        path,
+        waypointCount: Math.max(0, path.length - 1),
+        directDistanceMm: Math.hypot(target.snappedXMm - pose.xMm, target.snappedYMm - pose.yMm),
+        pathLengthMm: computePathLengthMm(path),
+        safetyBufferMm: GOAL_PREVIEW_CLEARANCE_MM,
+      }
+    }
+
+    openKeys.delete(currentKey)
+    expandedNodes += 1
+
+    const currentCell = grid.cellsByKey.get(currentKey)
+    if (!currentCell) {
+      continue
+    }
+
+    const currentCost = gScore.get(currentKey) ?? Number.POSITIVE_INFINITY
+    const neighborOffsets = [
+      { x: -1, y: -1 },
+      { x: 0, y: -1 },
+      { x: 1, y: -1 },
+      { x: -1, y: 0 },
+      { x: 1, y: 0 },
+      { x: -1, y: 1 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ]
+
+    neighborOffsets.forEach((offset) => {
+      const neighborKey = occupancyCellKey(currentCell.gridX + offset.x, currentCell.gridY + offset.y)
+      if (!plannerCellTraversable(grid, neighborKey)) {
+        return
+      }
+
+      if (offset.x !== 0 && offset.y !== 0) {
+        const horizontalKey = occupancyCellKey(currentCell.gridX + offset.x, currentCell.gridY)
+        const verticalKey = occupancyCellKey(currentCell.gridX, currentCell.gridY + offset.y)
+        if (
+          !plannerCellTraversable(grid, horizontalKey) ||
+          !plannerCellTraversable(grid, verticalKey)
+        ) {
+          return
+        }
+      }
+
+      const neighborCell = grid.cellsByKey.get(neighborKey)
+      if (!neighborCell) {
+        return
+      }
+
+      const stepDistanceMm = Math.hypot(offset.x, offset.y) * grid.cellSizeMm
+      const stepCost =
+        stepDistanceMm * (neighborCell.state === 'mixed' ? GOAL_PREVIEW_MIXED_CELL_COST : 1)
+      const tentativeCost = currentCost + stepCost
+
+      if (tentativeCost >= (gScore.get(neighborKey) ?? Number.POSITIVE_INFINITY)) {
+        return
+      }
+
+      cameFrom.set(neighborKey, currentKey)
+      gScore.set(neighborKey, tentativeCost)
+      fScore.set(neighborKey, tentativeCost + heuristic(neighborCell))
+      openKeys.add(neighborKey)
+    })
+  }
+
+  return buildGoalPreviewUnavailable(
+    'unreachable',
+    'A clean route through the currently mapped free-space cells could not be found for this target yet.',
+    request,
+    grid.frame,
+  )
+}
+
+function observedMapScanFromSelection(
+  selectedLidar: ResolvedSpatialLidar,
+  selectedPose: ResolvedSpatialPose,
+): SpatialObservedMapScan | null {
+  if (!selectedLidar.isRenderable || !selectedPose.isRenderable) {
+    return null
+  }
+
+  const robotLocalPoints = decodeSpatialLidarPoints(selectedLidar.scan)
+  if (robotLocalPoints.length === 0) {
+    return null
+  }
+
+  const sensorOrigin = robotLocalPointToWorld(
+    {
+      xMm: SPATIAL_LIDAR_SENSOR_OFFSET_X_MM,
+      yMm: SPATIAL_LIDAR_SENSOR_OFFSET_Y_MM,
+    },
+    selectedPose.pose,
+  )
+
+  return {
+    timestampMs: selectedLidar.scan.timestampMs,
+    sequence: selectedLidar.scan.sequence,
+    frame: selectedPose.pose.frame,
+    poseFrame: selectedLidar.scan.poseFrame,
+    source: selectedPose.pose.source,
+    originXMm: sensorOrigin.xMm,
+    originYMm: sensorOrigin.yMm,
+    pointCount: robotLocalPoints.length,
+    points: robotLocalPoints.map((point) => robotLocalPointToWorld(point, selectedPose.pose)),
+  }
+}
+
+export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel {
   const [sourceOverride, setSourceOverride] = useState<PoseSourceOverride>('auto')
   const [viewport, setViewport] = useState<SpatialViewportState>(DEFAULT_VIEWPORT)
   const [trail, setTrail] = useState<SpatialTrailPoint[]>([])
+  const [lidarHistory, setLidarHistory] = useState<SpatialBufferedLidarScan[]>([])
+  const [observedMapScans, setObservedMapScans] = useState<SpatialObservedMapScan[]>([])
+  const [occupancySessionScans, setOccupancySessionScans] = useState<SpatialObservedMapScan[]>([])
+  const [observedMapFrozen, setObservedMapFrozen] = useState(false)
+  const [observedMapFadeOlderScans, setObservedMapFadeOlderScans] = useState(true)
+  const [observedMapHistoryLimit, setObservedMapHistoryLimitState] = useState(
+    OBSERVED_MAP_HISTORY_LIMIT_DEFAULT,
+  )
+  const [showOccupancyLayer, setShowOccupancyLayer] = useState(true)
+  const [occupancyCellSizeMm, setOccupancyCellSizeMmState] = useState(
+    OCCUPANCY_CELL_SIZE_DEFAULT_MM,
+  )
+  const [occupancyDisplayMode, setOccupancyDisplayMode] =
+    useState<SpatialOccupancyDisplayMode>('free-and-occupied')
+  const [goalRequest, setGoalRequest] = useState<SpatialGoalRequest | null>(null)
+  const [goalPreviewArmed, setGoalPreviewArmed] = useState(false)
+  const [replayKey, setReplayKey] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [poseTransition, setPoseTransition] = useState<SpatialPoseTransitionState>(() => ({
     previous: null,
@@ -131,6 +942,11 @@ export function useSpatialViewModel(snapshot: TelemetrySnapshot): SpatialViewMod
     transitionMs: 0,
   }))
   const trailContextRef = useRef<string | null>(null)
+  const lidarContextRef = useRef<string | null>(null)
+  const observedMapContextRef = useRef<string | null>(null)
+  const goalContextRef = useRef<string | null>(null)
+  const lastLidarKeyRef = useRef<string | null>(null)
+  const lastObservedMapKeyRef = useRef<string | null>(null)
   const hasAutoCenteredRef = useRef(false)
 
   useEffect(() => {
@@ -147,6 +963,134 @@ export function useSpatialViewModel(snapshot: TelemetrySnapshot): SpatialViewMod
     () => resolveSpatialPose(snapshot, sourceOverride, nowMs),
     [nowMs, snapshot, sourceOverride],
   )
+  const selectedLidar = useMemo(
+    () => resolveSpatialLidar(snapshot, selectedPose, nowMs),
+    [nowMs, selectedPose, snapshot],
+  )
+  const lidarDiagnostics = useMemo(
+    () => inspectSpatialLidar(selectedLidar, selectedPose),
+    [selectedLidar, selectedPose],
+  )
+  const replaySelection = useMemo<SpatialReplaySelection | null>(() => {
+    if (!replayKey || lidarHistory.length === 0) {
+      return null
+    }
+
+    const index = lidarHistory.findIndex((scan) => bufferedLidarKey(scan) === replayKey)
+    if (index < 0) {
+      return null
+    }
+
+    const scan = lidarHistory[index]
+    return {
+      key: replayKey,
+      index,
+      total: lidarHistory.length,
+      ageMs: scan.timestampMs > 0 ? Math.max(0, nowMs - scan.timestampMs) : null,
+      scan,
+    }
+  }, [lidarHistory, nowMs, replayKey])
+  const replayMode: SpatialReplayMode = replaySelection ? 'history' : 'live'
+  const activePose = replaySelection ? replayPoseFromScan(replaySelection.scan) : selectedPose.pose
+  const displayTrail = useMemo(() => {
+    if (!replaySelection) {
+      return trail
+    }
+
+    return trail.filter((point) => point.timestampMs <= replaySelection.scan.timestampMs)
+  }, [replaySelection, trail])
+  const displayLidarHistory = useMemo(() => {
+    if (replaySelection) {
+      return lidarHistory.slice(0, replaySelection.index)
+    }
+
+    if (lidarHistory.length === 0) {
+      return []
+    }
+
+    const currentLiveKey = selectedLidar.isRenderable
+      ? `${selectedLidar.scan.sequence}:${selectedLidar.scan.timestampMs}:${selectedLidar.scan.poseFrame}:${selectedLidar.scan.frame}`
+      : null
+    const latestBufferedKey = bufferedLidarKey(lidarHistory[lidarHistory.length - 1])
+
+    return currentLiveKey !== null && latestBufferedKey === currentLiveKey
+      ? lidarHistory.slice(0, -1)
+      : lidarHistory
+  }, [lidarHistory, replaySelection, selectedLidar])
+  const displayObservedMapScans = useMemo(() => {
+    if (!replaySelection) {
+      return observedMapScans
+    }
+
+    return observedMapScans.filter((scan) => scan.timestampMs <= replaySelection.scan.timestampMs)
+  }, [observedMapScans, replaySelection])
+  const occupancySourceScans = useMemo(() => {
+    if (replaySelection) {
+      return displayObservedMapScans
+    }
+
+    return occupancySessionScans
+  }, [displayObservedMapScans, occupancySessionScans, replaySelection])
+  const plannerOccupancyLayer = useMemo(() => {
+    return computeOccupancyLayer(
+      occupancySourceScans,
+      occupancyCellSizeMm,
+      'free-and-occupied',
+    )
+  }, [occupancySourceScans, occupancyCellSizeMm])
+  const occupancyLayer = useMemo(() => {
+    if (!showOccupancyLayer) {
+      return null
+    }
+
+    if (occupancyDisplayMode === 'free-and-occupied') {
+      return plannerOccupancyLayer
+    }
+
+    return computeOccupancyLayer(
+      occupancySourceScans,
+      occupancyCellSizeMm,
+      occupancyDisplayMode,
+    )
+  }, [
+    occupancyDisplayMode,
+    occupancySourceScans,
+    occupancyCellSizeMm,
+    plannerOccupancyLayer,
+    showOccupancyLayer,
+  ])
+  const goalPlannerGrid = useMemo(
+    () => buildGoalPlannerGrid(plannerOccupancyLayer),
+    [plannerOccupancyLayer],
+  )
+  const currentRegistrationSample = useMemo<SpatialBufferedLidarSampleLike | null>(() => {
+    if (replaySelection) {
+      return replaySelection.scan
+    }
+
+    return liveScanFromSelection(selectedLidar, selectedPose)
+  }, [replaySelection, selectedLidar, selectedPose])
+  const referenceRegistrationSample = useMemo<SpatialBufferedLidarSampleLike | null>(() => {
+    if (replaySelection) {
+      return replaySelection.index > 0 ? lidarHistory[replaySelection.index - 1] : null
+    }
+
+    return displayLidarHistory.length > 0
+      ? displayLidarHistory[displayLidarHistory.length - 1]
+      : null
+  }, [displayLidarHistory, lidarHistory, replaySelection])
+  const scanRegistration = useMemo(
+    () => computeSpatialScanRegistration(currentRegistrationSample, referenceRegistrationSample),
+    [currentRegistrationSample, referenceRegistrationSample],
+  )
+  const goalPreview = useMemo(
+    () => computeGoalPreview(goalRequest, goalPreviewArmed, activePose, goalPlannerGrid),
+    [activePose, goalPlannerGrid, goalPreviewArmed, goalRequest],
+  )
+
+  useEffect(() => {
+    setObservedMapScans((current) => current.slice(-observedMapHistoryLimit))
+  }, [observedMapHistoryLimit])
 
   useEffect(() => {
     if (!selectedPose.isRenderable || hasAutoCenteredRef.current) {
@@ -258,33 +1202,298 @@ export function useSpatialViewModel(snapshot: TelemetrySnapshot): SpatialViewMod
     sourceOverride,
   ])
 
+  useEffect(() => {
+    const nextContext =
+      selectedLidar.isRenderable && selectedPose.isRenderable
+        ? `${sourceOverride}:${selectedPose.pose.source}:${selectedPose.pose.frame}:${selectedLidar.scan.poseFrame}:${selectedLidar.scan.frame}`
+        : null
+    const contextChanged = lidarContextRef.current !== nextContext
+
+    if (!selectedLidar.isRenderable || !selectedPose.isRenderable) {
+      lidarContextRef.current = nextContext
+      lastLidarKeyRef.current = null
+      setLidarHistory([])
+      return
+    }
+
+    if (contextChanged) {
+      lidarContextRef.current = nextContext
+      lastLidarKeyRef.current = null
+      setLidarHistory([])
+    }
+
+    if (selectedLidar.scan.freshness !== 'live') {
+      return
+    }
+
+    const sampleKey = `${selectedLidar.scan.sequence}:${selectedLidar.scan.timestampMs}`
+    if (lastLidarKeyRef.current === sampleKey) {
+      return
+    }
+
+    lastLidarKeyRef.current = sampleKey
+
+    const points = decodeSpatialLidarPoints(selectedLidar.scan)
+    if (points.length === 0) {
+      return
+    }
+
+    const sample: SpatialBufferedLidarScan = {
+      timestampMs: selectedLidar.scan.timestampMs,
+      sequence: selectedLidar.scan.sequence,
+      frame: selectedLidar.scan.frame,
+      poseFrame: selectedLidar.scan.poseFrame,
+      freshness: selectedLidar.scan.freshness,
+      pose: {
+        xMm: selectedPose.pose.xMm,
+        yMm: selectedPose.pose.yMm,
+        yawDeg: selectedPose.pose.yawDeg,
+        frame: selectedPose.pose.frame,
+        source: selectedPose.pose.source,
+      },
+      points,
+    }
+
+    setLidarHistory((current) => [...current, sample].slice(-LIDAR_HISTORY_MAX_SCANS))
+  }, [
+    selectedLidar.isRenderable,
+    selectedLidar.scan.frame,
+    selectedLidar.scan.freshness,
+    selectedLidar.scan.poseFrame,
+    selectedLidar.scan.sequence,
+    selectedLidar.scan.timestampMs,
+    selectedPose.isRenderable,
+    selectedPose.pose.frame,
+    selectedPose.pose.source,
+    selectedPose.pose.timestampMs,
+    selectedPose.pose.xMm,
+    selectedPose.pose.yMm,
+    selectedPose.pose.yawDeg,
+    sourceOverride,
+  ])
+
+  useEffect(() => {
+    const nextContext =
+      selectedLidar.isRenderable && selectedPose.isRenderable
+        ? `${sourceOverride}:${selectedPose.pose.source}:${selectedPose.pose.frame}:${selectedLidar.scan.poseFrame}:${selectedLidar.scan.frame}`
+        : null
+    const contextChanged = observedMapContextRef.current !== nextContext
+
+    if (!selectedLidar.isRenderable || !selectedPose.isRenderable) {
+      observedMapContextRef.current = nextContext
+      lastObservedMapKeyRef.current = null
+      setObservedMapScans([])
+      setOccupancySessionScans([])
+      return
+    }
+
+    if (contextChanged) {
+      observedMapContextRef.current = nextContext
+      lastObservedMapKeyRef.current = null
+      setObservedMapScans([])
+      setOccupancySessionScans([])
+    }
+
+    if (observedMapFrozen || selectedLidar.scan.freshness !== 'live') {
+      return
+    }
+
+    const sampleKey = `${selectedLidar.scan.sequence}:${selectedLidar.scan.timestampMs}`
+    if (lastObservedMapKeyRef.current === sampleKey) {
+      return
+    }
+
+    lastObservedMapKeyRef.current = sampleKey
+
+    const sample = observedMapScanFromSelection(selectedLidar, selectedPose)
+    if (!sample || sample.points.length === 0) {
+      return
+    }
+
+    setObservedMapScans((current) => {
+      const next = [...current, sample]
+      return next.slice(-observedMapHistoryLimit)
+    })
+    setOccupancySessionScans((current) => [...current, sample])
+  }, [
+    observedMapFrozen,
+    observedMapHistoryLimit,
+    selectedLidar.isRenderable,
+    selectedLidar.scan.frame,
+    selectedLidar.scan.freshness,
+    selectedLidar.scan.poseFrame,
+    selectedLidar.scan.sequence,
+    selectedLidar.scan.timestampMs,
+    selectedPose.isRenderable,
+    selectedPose.pose.frame,
+    selectedPose.pose.source,
+    selectedPose.pose.timestampMs,
+    selectedPose.pose.xMm,
+    selectedPose.pose.yMm,
+    selectedPose.pose.yawDeg,
+    sourceOverride,
+  ])
+
+  useEffect(() => {
+    if (replayKey && replaySelection === null) {
+      setReplayKey(null)
+    }
+  }, [replayKey, replaySelection])
+
+  useEffect(() => {
+    const nextContext =
+      activePose.available && activePose.frame
+        ? `${sourceOverride}:${activePose.source}:${activePose.frame}:${replayMode}`
+        : null
+    const contextChanged = goalContextRef.current !== nextContext
+
+    if (!activePose.available || activePose.freshness === 'invalid') {
+      goalContextRef.current = nextContext
+      setGoalRequest(null)
+      setGoalPreviewArmed(false)
+      return
+    }
+
+    if (contextChanged) {
+      goalContextRef.current = nextContext
+      setGoalRequest(null)
+      setGoalPreviewArmed(false)
+    }
+  }, [
+    activePose.available,
+    activePose.frame,
+    activePose.freshness,
+    activePose.source,
+    replayMode,
+    sourceOverride,
+  ])
+
+  useEffect(() => {
+    if (goalPreviewArmed && goalPreview.status !== 'armed' && goalPreview.status !== 'ready') {
+      setGoalPreviewArmed(false)
+    }
+  }, [goalPreview.status, goalPreviewArmed])
+
   const centerOnRobot = () => {
-    if (!selectedPose.isRenderable) {
+    if (!activePose.available || activePose.freshness === 'invalid') {
       return
     }
 
     setViewport((current) => ({
       ...current,
-      centerXMm: selectedPose.pose.xMm,
-      centerYMm: selectedPose.pose.yMm,
+      centerXMm: activePose.xMm,
+      centerYMm: activePose.yMm,
     }))
   }
 
   const resetView = () => {
     setViewport({
-      centerXMm: selectedPose.isRenderable ? selectedPose.pose.xMm : 0,
-      centerYMm: selectedPose.isRenderable ? selectedPose.pose.yMm : 0,
+      centerXMm: activePose.available ? activePose.xMm : 0,
+      centerYMm: activePose.available ? activePose.yMm : 0,
       zoomPxPerMm: DEFAULT_VIEWPORT.zoomPxPerMm,
     })
   }
 
   const clearTrail = () => {
-    if (!selectedPose.isRenderable || selectedPose.pose.freshness !== 'live') {
+    if (!activePose.available || activePose.freshness !== 'live') {
       setTrail([])
       return
     }
 
-    setTrail([toTrailPoint(selectedPose.pose)])
+    setTrail([toTrailPoint(activePose)])
+  }
+
+  const clearLidarHistory = () => {
+    setLidarHistory([])
+    lastLidarKeyRef.current = null
+    setReplayKey(null)
+  }
+
+  const clearObservedMap = () => {
+    setObservedMapScans([])
+    setOccupancySessionScans([])
+    lastObservedMapKeyRef.current = null
+  }
+
+  const toggleObservedMapFrozen = () => {
+    setObservedMapFrozen((current) => !current)
+  }
+
+  const toggleObservedMapFadeOlderScans = () => {
+    setObservedMapFadeOlderScans((current) => !current)
+  }
+
+  const setObservedMapHistoryLimit = (limit: number) => {
+    const nextLimit = OBSERVED_MAP_HISTORY_LIMIT_OPTIONS.reduce((nearest, candidate) => {
+      return Math.abs(candidate - limit) < Math.abs(nearest - limit) ? candidate : nearest
+    }, OBSERVED_MAP_HISTORY_LIMIT_OPTIONS[0])
+
+    setObservedMapHistoryLimitState(nextLimit)
+  }
+
+  const toggleOccupancyLayer = () => {
+    setShowOccupancyLayer((current) => !current)
+  }
+
+  const setOccupancyCellSizeMm = (cellSizeMm: number) => {
+    const nextCellSizeMm = OCCUPANCY_CELL_SIZE_OPTIONS_MM.reduce((nearest, candidate) => {
+      return Math.abs(candidate - cellSizeMm) < Math.abs(nearest - cellSizeMm)
+        ? candidate
+        : nearest
+    }, OCCUPANCY_CELL_SIZE_OPTIONS_MM[0])
+
+    setOccupancyCellSizeMmState(nextCellSizeMm)
+  }
+
+  const toggleOccupancyDisplayMode = () => {
+    setOccupancyDisplayMode((current) =>
+      current === 'free-and-occupied' ? 'occupied-only' : 'free-and-occupied',
+    )
+  }
+
+  const selectGoalAtWorldPoint = (point: SpatialPathPreviewPoint) => {
+    setGoalRequest({
+      xMm: point.xMm,
+      yMm: point.yMm,
+    })
+    setGoalPreviewArmed(false)
+  }
+
+  const armGoalPreview = () => {
+    if (goalPreview.status === 'ready' || goalPreview.status === 'armed') {
+      setGoalPreviewArmed(true)
+    }
+  }
+
+  const disarmGoalPreview = () => {
+    setGoalPreviewArmed(false)
+  }
+
+  const clearGoalPreview = () => {
+    setGoalRequest(null)
+    setGoalPreviewArmed(false)
+  }
+
+  const enterReplayAtIndex = (index: number) => {
+    if (lidarHistory.length === 0) {
+      return
+    }
+
+    const nextIndex = Math.round(clamp(index, 0, lidarHistory.length - 1))
+    setReplayKey(bufferedLidarKey(lidarHistory[nextIndex]))
+  }
+
+  const stepReplay = (delta: number) => {
+    if (lidarHistory.length === 0) {
+      return
+    }
+
+    const baseIndex = replaySelection?.index ?? (lidarHistory.length - 1)
+    enterReplayAtIndex(baseIndex + delta)
+  }
+
+  const returnToLive = () => {
+    setReplayKey(null)
   }
 
   const panViewport = (deltaXPx: number, deltaYPx: number) => {
@@ -327,13 +1536,49 @@ export function useSpatialViewModel(snapshot: TelemetrySnapshot): SpatialViewMod
     sourceOverride,
     setSourceOverride,
     selectedPose,
+    selectedLidar,
+    lidarDiagnostics,
+    scanRegistration,
     sourceStates: snapshot.poseSources,
     trail,
+    displayTrail,
+    lidarHistory,
+    displayLidarHistory,
+    observedMapScans,
+    displayObservedMapScans,
+    occupancySessionScanCount: occupancySessionScans.length,
+    observedMapFrozen,
+    observedMapFadeOlderScans,
+    observedMapHistoryLimit,
+    observedMapHistoryLimitOptions: OBSERVED_MAP_HISTORY_LIMIT_OPTIONS,
+    showOccupancyLayer,
+    toggleOccupancyLayer,
+    occupancyCellSizeMm,
+    occupancyCellSizeOptionsMm: OCCUPANCY_CELL_SIZE_OPTIONS_MM,
+    occupancyDisplayMode,
+    toggleOccupancyDisplayMode,
+    occupancyLayer,
+    goalPreview,
+    selectGoalAtWorldPoint,
+    armGoalPreview,
+    disarmGoalPreview,
+    clearGoalPreview,
+    replayMode,
+    replaySelection,
     viewport,
     poseTransition,
     centerOnRobot,
     resetView,
     clearTrail,
+    clearLidarHistory,
+    clearObservedMap,
+    toggleObservedMapFrozen,
+    toggleObservedMapFadeOlderScans,
+    setObservedMapHistoryLimit,
+    setOccupancyCellSizeMm,
+    enterReplayAtIndex,
+    stepReplay,
+    returnToLive,
     panViewport,
     zoomViewport,
   }

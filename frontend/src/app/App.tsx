@@ -272,7 +272,7 @@ export default function App() {
 
   const main =
     activeWorkspace === 'spatial-view'
-      ? <SpatialWorkspace snapshot={snapshot} />
+      ? <SpatialWorkspace />
       : activeWorkspace === 'custom-telemetry'
       ? <CustomTelemetryWorkspace />
       : activeWorkspace === 'camera-wall'

@@ -1,5 +1,11 @@
 import { clamp } from '../lib/format'
-import { createDefaultPoseSources, createPlanarPoseData, generateMockTelemetryFrame } from './mockTelemetry'
+import {
+  createDefaultPoseSources,
+  createPlanarPoseData,
+  createSpatialLidarScan,
+  createSpatialStreamStatus,
+  generateMockTelemetryFrame,
+} from './mockTelemetry'
 import type {
   BridgeConnectionPreference,
   BridgeConnectionResponse,
@@ -13,6 +19,8 @@ import type {
   RemoteDriverSessionMode,
   RemoteDriverStateCommand,
   RemoteDriverStatus,
+  SpatialLidarScan,
+  SpatialSnapshot,
   TelemetryCatalogFeed,
   TelemetryCatalogStats,
   TelemetrySnapshot,
@@ -49,6 +57,7 @@ type SimulationPoseState = {
 }
 
 type TelemetryListener = (snapshot: TelemetrySnapshot) => void
+type SpatialListener = (snapshot: SpatialSnapshot) => void
 type CatalogListener = (catalog: TelemetryCatalogFeed) => void
 
 const simulatedModes = [
@@ -98,6 +107,7 @@ function createSimulationBridgeStatus(timestamp: string): BridgeStatus {
     transport: 'simulation',
     chooserPath: 'Simulation/Auto mode',
     telemetryEndpoint: 'simulation://telemetry',
+    spatialEndpoint: 'simulation://spatial',
     controlModeEndpoint: 'simulation://control-mode',
     topicCatalogEndpoint: 'simulation://topics',
     topicWriteEndpoint: 'simulation://topics/write',
@@ -276,8 +286,11 @@ class SimulationEngine {
   }
   private snapshot = this.composeSnapshot(Date.now())
   private telemetryListeners = new Set<TelemetryListener>()
+  private spatialListeners = new Set<SpatialListener>()
   private catalogListeners = new Set<CatalogListener>()
   private intervalId: number | null = null
+  private spatialLidarSequence = 0
+  private spatialLidarTimestampMs: number | null = null
 
   private resetPoseState() {
     this.poseState = {
@@ -302,7 +315,11 @@ class SimulationEngine {
   }
 
   private releaseClockIfIdle() {
-    if (this.telemetryListeners.size > 0 || this.catalogListeners.size > 0) {
+    if (
+      this.telemetryListeners.size > 0 ||
+      this.spatialListeners.size > 0 ||
+      this.catalogListeners.size > 0
+    ) {
       return
     }
 
@@ -488,6 +505,87 @@ class SimulationEngine {
     return base
   }
 
+  private buildSpatialLidar(snapshot: TelemetrySnapshot, timestampMs: number): SpatialLidarScan {
+    const poseFrame = snapshot.pose.frame
+    const pointCount = 31
+    const angleStartDeg = 120
+    const angleStepDeg = 4
+
+    if (!snapshot.connection.online || !snapshot.systems.lidarHealthy || !snapshot.systems.validScan) {
+      return createSpatialLidarScan('simulation', {
+        available: false,
+        freshness: snapshot.connection.online ? 'stale' : 'invalid',
+        frame: 'robot_base',
+        poseFrame,
+        angleStartDeg,
+        angleStepDeg,
+        distancesMm: [],
+        pointCount: 0,
+        validPointCount: 0,
+        sequence: this.spatialLidarSequence,
+        timestampMs,
+      })
+    }
+
+    if (this.spatialLidarTimestampMs !== timestampMs) {
+      this.spatialLidarSequence += 1
+      this.spatialLidarTimestampMs = timestampMs
+    }
+
+    const distancesMm = Array.from({ length: pointCount }, (_, index) => {
+      const angleDeg = angleStartDeg + index * angleStepDeg
+      const normalized = (angleDeg - 180) / 60
+      const frontBlend = clamp(1 - Math.abs(normalized), 0, 1)
+      const rightEdgeDistance =
+        snapshot.perception.rightOpenFlag && snapshot.perception.rightOpenMm > 0
+          ? snapshot.perception.rightOpenMm
+          : snapshot.perception.rightWallMm
+      const leftEdgeDistance =
+        snapshot.perception.leftOpenFlag && snapshot.perception.leftOpenMm > 0
+          ? snapshot.perception.leftOpenMm
+          : snapshot.perception.leftWallMm
+      const edgeDistance = normalized < 0 ? leftEdgeDistance : rightEdgeDistance
+      const wave = Math.sin(timestampMs / 340 + index * 0.42) * 18
+
+      return Math.max(
+        0,
+        Math.round(
+          snapshot.perception.frontMedianMm * frontBlend + edgeDistance * (1 - frontBlend) + wave,
+        ),
+      )
+    })
+
+    const validPointCount = distancesMm.filter((distanceMm) => distanceMm > 0).length
+
+    return createSpatialLidarScan('simulation', {
+      available: validPointCount > 0,
+      freshness: 'live',
+      frame: 'robot_base',
+      poseFrame,
+      angleStartDeg,
+      angleStepDeg,
+      distancesMm,
+      pointCount: distancesMm.length,
+      validPointCount,
+      sequence: this.spatialLidarSequence,
+      timestampMs,
+    })
+  }
+
+  private buildSpatialSnapshot(timestampMs: number): SpatialSnapshot {
+    return {
+      timestamp: this.snapshot.timestamp,
+      bridgeStatus: this.bridgeStatus,
+      connection: this.snapshot.connection,
+      pose: this.snapshot.pose,
+      poseSources: this.snapshot.poseSources,
+      lidar: this.buildSpatialLidar(this.snapshot, timestampMs),
+      stream: createSpatialStreamStatus('simulation', {
+        message: 'Dedicated simulation spatial feed active.',
+      }),
+    }
+  }
+
   private buildCatalog(): TelemetryCatalogFeed {
     const topics = [
       createTopic('/robot/battery/voltage', 'Battery Voltage', 'telemetry', this.snapshot.battery.voltageV),
@@ -569,8 +667,10 @@ class SimulationEngine {
   private publish() {
     const snapshot = this.snapshot
     const catalog = this.buildCatalog()
+    const spatial = this.buildSpatialSnapshot(Date.now())
 
     this.telemetryListeners.forEach((listener) => listener(snapshot))
+    this.spatialListeners.forEach((listener) => listener(spatial))
     this.catalogListeners.forEach((listener) => listener(catalog))
   }
 
@@ -587,6 +687,23 @@ class SimulationEngine {
 
     return () => {
       this.telemetryListeners.delete(onSnapshot)
+      this.releaseClockIfIdle()
+    }
+  }
+
+  getSpatialSnapshot() {
+    this.ensureClock()
+    this.refresh(Date.now())
+    return this.buildSpatialSnapshot(Date.now())
+  }
+
+  subscribeSpatialTelemetry(onSnapshot: SpatialListener) {
+    this.ensureClock()
+    this.spatialListeners.add(onSnapshot)
+    onSnapshot(this.getSpatialSnapshot())
+
+    return () => {
+      this.spatialListeners.delete(onSnapshot)
       this.releaseClockIfIdle()
     }
   }
@@ -898,6 +1015,20 @@ export function subscribeTelemetry(
   void _onError
   void _intervalMs
   return engine.subscribeTelemetry(onSnapshot)
+}
+
+export async function getSpatialSnapshot(): Promise<SpatialSnapshot> {
+  return engine.getSpatialSnapshot()
+}
+
+export function subscribeSpatialTelemetry(
+  onSnapshot: (snapshot: SpatialSnapshot) => void,
+  _onError: () => void,
+  _intervalMs: number,
+) {
+  void _onError
+  void _intervalMs
+  return engine.subscribeSpatialTelemetry(onSnapshot)
 }
 
 export async function getTelemetryCatalog(): Promise<TelemetryCatalogFeed> {
