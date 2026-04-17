@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HomeWorkspacePresetId } from './homeWorkspacePresets'
 import {
+  createHomeWorkspaceBooleanButtonStarterWidget,
   HOME_WORKSPACE_MAX_PAGES,
+  createHomeWorkspaceBooleanStarterWidget,
   createHomeWorkspacePage,
   createHomeWorkspacePresetWidget,
   createHomeWorkspaceWidget,
@@ -10,6 +12,7 @@ import {
   persistHomeWorkspaceState,
   placeWidgetInLayout,
   type HomeWorkspaceState,
+  type HomeWorkspacePresetWidgetConfig,
   type HomeWorkspaceWidget,
   type HomeWorkspaceWidgetConfig,
   type HomeWorkspaceWidgetRenderer,
@@ -17,6 +20,7 @@ import {
 
 interface HomeWorkspaceWidgetPatch {
   config?: Partial<HomeWorkspaceWidgetConfig>
+  presetConfig?: Partial<HomeWorkspacePresetWidgetConfig>
   renderer?: HomeWorkspaceWidgetRenderer
   title?: string
   topicKey?: string | null
@@ -164,6 +168,22 @@ export function useHomeWorkspace() {
     )
   }
 
+  const addBooleanStarterToActivePage = () => {
+    setWorkspace((current) =>
+      commitState(current, (state) =>
+        updateActivePageWidgets(state, (widgets) => [...widgets, createHomeWorkspaceBooleanStarterWidget(widgets)]),
+      ),
+    )
+  }
+
+  const addBooleanButtonStarterToActivePage = () => {
+    setWorkspace((current) =>
+      commitState(current, (state) =>
+        updateActivePageWidgets(state, (widgets) => [...widgets, createHomeWorkspaceBooleanButtonStarterWidget(widgets)]),
+      ),
+    )
+  }
+
   const addPresetWidgetToActivePage = (presetId: HomeWorkspacePresetId) => {
     setWorkspace((current) =>
       commitState(current, (state) =>
@@ -196,6 +216,12 @@ export function useHomeWorkspace() {
                   typeof patch.title === 'string'
                     ? patch.title.trim().slice(0, 48) || widget.title
                     : widget.title,
+                config: patch.presetConfig
+                  ? {
+                      ...widget.config,
+                      ...patch.presetConfig,
+                    }
+                  : widget.config,
               }
             }
 
@@ -290,6 +316,8 @@ export function useHomeWorkspace() {
     addPage,
     removePage,
     addTopicWidgetToActivePage,
+    addBooleanStarterToActivePage,
+    addBooleanButtonStarterToActivePage,
     addPresetWidgetToActivePage,
     removeWidget,
     updateWidget,

@@ -1,5 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
+import { useState } from 'react'
+import { writeTelemetryTopicValue } from '../../../data/telemetryGateway'
 import { cn } from '../../../lib/cn'
 import { clamp } from '../../../lib/format'
 import { getHomeWorkspacePresetDefinition } from '../../../home-workspace/homeWorkspacePresets'
@@ -22,6 +24,8 @@ import { BatteryPanelBody } from '../BatteryPanel'
 import { CommandsPanelBody } from '../CommandsPanel'
 import { HeadingPanelBody } from '../HeadingPanel'
 import { SystemsHealthPanelBody } from '../SystemsHealthPanel'
+import { HomeWorkspaceCameraStreamWidget } from './HomeWorkspaceCameraStreamWidget'
+import { HomeWorkspaceSpatialViewWidget } from './HomeWorkspaceSpatialViewWidget'
 
 export type WorkspaceHistoryPoint = {
   timestamp: string
@@ -31,6 +35,11 @@ export type WorkspaceHistoryPoint = {
 export type WorkspaceWidgetDensity = 'compact' | 'medium' | 'large'
 type WorkspaceTopicKind = 'number' | 'boolean' | 'text'
 type WorkspaceWidgetTone = 'good' | 'warning' | 'critical' | 'neutral'
+
+const RASPBERRY_AVAILABLE_TOPIC = 'Telemetry/Robot/Raspberry/Available'
+const RASPBERRY_CPU_TOPIC = 'Telemetry/Robot/Raspberry/CPU Usage (%)'
+const RASPBERRY_RAM_TOPIC = 'Telemetry/Robot/Raspberry/RAM Usage (%)'
+const RASPBERRY_TEMPERATURE_TOPIC = 'Telemetry/Robot/Raspberry/Temperature (C)'
 
 function getTopicKind(topic: TelemetryTopic | null): WorkspaceTopicKind {
   if (topic?.valueKind === 'number') return 'number'
@@ -53,6 +62,18 @@ function formatNumberValue(value: number | null, decimals: number, units: string
 
   const unitSuffix = units.trim() ? ` ${units.trim()}` : ''
   return `${value.toFixed(decimals)}${unitSuffix}`
+}
+
+function formatCompactMetric(value: number | null, decimals: number, units: string) {
+  if (value === null) {
+    return '--'
+  }
+
+  if (units === '%') {
+    return `${value.toFixed(decimals)}%`
+  }
+
+  return `${value.toFixed(decimals)} ${units}`.trim()
 }
 
 function toneAccent(tone: WorkspaceWidgetTone) {
@@ -156,7 +177,9 @@ export function allowedWidgetRenderers(topic: TelemetryTopic | null): WidgetRend
   const kind = getTopicKind(topic)
 
   if (kind === 'boolean') {
-    return ['auto', 'boolean-light', 'boolean-pill', 'boolean-tile', 'text-line']
+    return topic?.isWritable
+      ? ['auto', 'boolean-button', 'boolean-light', 'boolean-pill', 'boolean-tile', 'text-line']
+      : ['auto', 'boolean-light', 'boolean-pill', 'boolean-tile', 'text-line']
   }
 
   if (kind === 'number') {
@@ -172,7 +195,8 @@ export function widgetRendererLabel(renderer: WidgetRendererId) {
   if (renderer === 'gauge') return 'Gauge'
   if (renderer === 'bar') return 'Percent Bar'
   if (renderer === 'sparkline') return 'Trend Graph'
-  if (renderer === 'boolean-light') return 'Status Light'
+  if (renderer === 'boolean-button') return 'Boolean Button'
+  if (renderer === 'boolean-light') return 'Boolean LED'
   if (renderer === 'boolean-pill') return 'Pill State'
   if (renderer === 'boolean-tile') return 'On/Off Tile'
   if (renderer === 'text-line') return 'Status Line'
@@ -188,11 +212,67 @@ export function workspaceWidgetLabel(widget: HomeWorkspaceWidget) {
   return widgetRendererLabel(widget.renderer)
 }
 
+function booleanAccent(value: boolean | null) {
+  if (value === null) {
+    return {
+      color: 'var(--text-muted)',
+      soft: 'color-mix(in srgb, var(--border-strong) 18%, transparent)',
+      border: 'color-mix(in srgb, var(--border-strong) 48%, transparent)',
+    }
+  }
+
+  if (value) {
+    return {
+      color: 'var(--success)',
+      soft: 'color-mix(in srgb, var(--success) 18%, transparent)',
+      border: 'color-mix(in srgb, var(--success) 32%, transparent)',
+    }
+  }
+
+  return {
+    color: 'var(--danger)',
+    soft: 'color-mix(in srgb, var(--danger) 18%, transparent)',
+    border: 'color-mix(in srgb, var(--danger) 32%, transparent)',
+  }
+}
+
+function metricToneAccent(tone: WorkspaceWidgetTone) {
+  if (tone === 'critical') {
+    return {
+      color: 'var(--danger)',
+      soft: 'color-mix(in srgb, var(--danger) 18%, transparent)',
+      border: 'color-mix(in srgb, var(--danger) 32%, transparent)',
+    }
+  }
+
+  if (tone === 'warning') {
+    return {
+      color: 'var(--warning)',
+      soft: 'color-mix(in srgb, var(--warning) 18%, transparent)',
+      border: 'color-mix(in srgb, var(--warning) 32%, transparent)',
+    }
+  }
+
+  if (tone === 'good') {
+    return {
+      color: 'var(--success)',
+      soft: 'color-mix(in srgb, var(--success) 18%, transparent)',
+      border: 'color-mix(in srgb, var(--success) 32%, transparent)',
+    }
+  }
+
+  return {
+    color: 'var(--text-muted)',
+    soft: 'color-mix(in srgb, var(--border-strong) 18%, transparent)',
+    border: 'color-mix(in srgb, var(--border-strong) 48%, transparent)',
+  }
+}
+
 function resolveRenderer(widget: HomeWorkspaceTopicWidget, topic: TelemetryTopic | null, density: WorkspaceWidgetDensity) {
   const kind = getTopicKind(topic)
   const allowed = allowedWidgetRenderers(topic)
 
-  if (widget.renderer !== 'auto' && allowed.includes(widget.renderer)) {
+  if (widget.renderer !== 'auto' && (topic === null || allowed.includes(widget.renderer))) {
     return rendererFallbackForDensity(widget.renderer, kind, density)
   }
 
@@ -461,26 +541,149 @@ function SparklineView({
   )
 }
 
-function BooleanLightView({
+function BooleanButtonView({
   value,
+  topic,
+  density,
+  preview = false,
 }: {
   value: boolean | null
+  topic: TelemetryTopic | null
+  density?: WorkspaceWidgetDensity
+  preview?: boolean
 }) {
-  const on = Boolean(value)
-  const accent = toneAccent(on ? 'good' : 'neutral')
+  const [isWriting, setIsWriting] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const accent = booleanAccent(value)
+  const compact = density === 'compact'
+  const canWrite =
+    !preview && topic?.isWritable === true && topic.valueKind === 'boolean'
+  const nextValue = value === null ? true : !value
+  const statusLabel = isWriting
+    ? 'Writing...'
+    : value === null
+      ? preview
+        ? 'Toggle'
+        : 'Unknown'
+      : value
+        ? 'On'
+        : 'Off'
+  const background =
+    value === null
+      ? 'linear-gradient(180deg, color-mix(in srgb, var(--surface-alt) 92%, white 8%) 0%, color-mix(in srgb, var(--surface) 88%, black 12%) 100%)'
+      : `linear-gradient(180deg, color-mix(in srgb, ${accent.color} 88%, white 12%) 0%, color-mix(in srgb, ${accent.color} 72%, black 28%) 100%)`
+
+  const handleToggle = async () => {
+    if (!canWrite || !topic || isWriting) {
+      return
+    }
+
+    setIsWriting(true)
+    setErrorMessage(null)
+
+    try {
+      const response = await writeTelemetryTopicValue(topic.key, 'boolean', nextValue)
+      if (response.error) {
+        setErrorMessage(response.error)
+      }
+    } catch {
+      setErrorMessage('Unable to write the boolean topic right now.')
+    } finally {
+      setIsWriting(false)
+    }
+  }
 
   return (
-    <div className="flex h-full items-center gap-3">
+    <button
+      type="button"
+      onClick={handleToggle}
+      disabled={!canWrite || isWriting}
+      aria-pressed={value === true}
+      className="h-full w-full text-left disabled:cursor-default"
+      title={errorMessage ?? (!canWrite && !preview ? 'This boolean topic is read-only.' : statusLabel)}
+    >
       <div
-        className="h-5 w-5 rounded-full border"
+        className={cn(
+          'relative flex h-full min-h-0 flex-col overflow-hidden border px-3 py-3 transition-transform duration-150',
+          compact ? 'rounded-[14px]' : 'rounded-[18px]',
+          canWrite && !isWriting ? 'hover:scale-[0.985] active:scale-[0.97]' : '',
+        )}
         style={{
-          borderColor: on ? accent.color : 'var(--border)',
-          backgroundColor: on ? accent.color : 'var(--surface-alt)',
-          boxShadow: on ? `0 0 0 6px ${accent.soft}` : 'none',
+          borderColor: accent.border,
+          background,
+          boxShadow:
+            value === null
+              ? 'inset 0 1px 0 rgba(255,255,255,0.05)'
+              : `inset 0 1px 0 rgba(255,255,255,0.16), 0 0 24px ${accent.soft}`,
+          opacity: isWriting ? 0.84 : 1,
         }}
-      />
-      <div className="text-[0.84rem] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-        {value === null ? 'Unknown' : on ? 'On' : 'Off'}
+      >
+        <div className="absolute inset-x-[10%] top-[8%] h-[18%] rounded-full bg-white/18 blur-md" />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <div
+            className="relative inline-flex h-7 w-12 items-center rounded-full border border-white/16 bg-[rgba(15,23,42,0.24)]"
+            aria-hidden="true"
+          >
+            <div
+              className={cn(
+                'absolute h-5 w-5 rounded-full bg-white shadow-[0_6px_18px_rgba(15,23,42,0.28)] transition-all duration-150',
+                value === true ? 'left-[1.35rem]' : 'left-1',
+              )}
+            />
+          </div>
+        </div>
+
+        {!compact ? (
+          <div className="flex items-center justify-between gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-white/92">
+            <span>{statusLabel}</span>
+            <span>{errorMessage ? 'retry' : canWrite ? 'toggle' : 'locked'}</span>
+          </div>
+        ) : null}
+      </div>
+    </button>
+  )
+}
+
+function BooleanLightView({
+  value,
+  density,
+}: {
+  value: boolean | null
+  density?: WorkspaceWidgetDensity
+}) {
+  const accent = booleanAccent(value)
+  const compact = density === 'compact'
+  const fillBackground =
+    value === null
+      ? 'linear-gradient(180deg, color-mix(in srgb, var(--surface-alt) 94%, white 6%) 0%, color-mix(in srgb, var(--surface) 88%, black 12%) 100%)'
+      : `linear-gradient(180deg, color-mix(in srgb, ${accent.color} 92%, white 8%) 0%, color-mix(in srgb, ${accent.color} 76%, black 24%) 100%)`
+
+  return (
+    <div className="flex h-full min-h-0">
+      <div
+        className={cn(
+          'relative h-full w-full overflow-hidden border',
+          compact ? 'rounded-[14px]' : 'rounded-[18px]',
+        )}
+        style={{
+          borderColor: accent.border,
+          background: fillBackground,
+          boxShadow:
+            value === null
+              ? 'inset 0 1px 0 rgba(255,255,255,0.05)'
+              : `inset 0 1px 0 rgba(255,255,255,0.16), 0 0 28px ${accent.soft}`,
+        }}
+      >
+        <div className="absolute inset-x-[10%] top-[8%] h-[18%] rounded-full bg-white/20 blur-md" />
+        <div
+          className="absolute inset-x-0 bottom-0 h-[24%]"
+          style={{
+            background:
+              value === null
+                ? 'linear-gradient(180deg, transparent 0%, rgba(15,23,42,0.12) 100%)'
+                : 'linear-gradient(180deg, transparent 0%, rgba(15,23,42,0.22) 100%)',
+          }}
+        />
       </div>
     </div>
   )
@@ -491,8 +694,7 @@ function BooleanPillView({
 }: {
   value: boolean | null
 }) {
-  const on = Boolean(value)
-  const accent = toneAccent(on ? 'good' : 'neutral')
+  const accent = booleanAccent(value)
 
   return (
     <div className="flex h-full items-center">
@@ -500,12 +702,15 @@ function BooleanPillView({
         className="inline-flex items-center gap-3 rounded-full border px-4 py-2"
         style={{
           borderColor: accent.border,
-          background: on ? accent.soft : 'var(--surface)',
+          background:
+            value === null
+              ? 'var(--surface)'
+              : `color-mix(in srgb, ${accent.color} 18%, var(--surface) 82%)`,
         }}
       >
-        <span className="h-3 w-3 rounded-full" style={{ background: on ? accent.color : 'var(--text-muted)' }} />
+        <span className="h-3 w-3 rounded-full" style={{ background: value === null ? 'var(--text-muted)' : accent.color }} />
         <span className="text-[0.82rem] font-semibold uppercase tracking-[0.16em] text-[var(--text)]">
-          {value === null ? 'Unknown' : on ? 'Active' : 'Idle'}
+          {value === null ? 'Unknown' : value ? 'Active' : 'Inactive'}
         </span>
       </div>
     </div>
@@ -519,24 +724,64 @@ function BooleanTileView({
   value: boolean | null
   topic: TelemetryTopic | null
 }) {
-  const on = Boolean(value)
-  const accent = toneAccent(on ? 'good' : 'neutral')
+  const accent = booleanAccent(value)
 
   return (
     <div
       className="grid h-full min-h-0 content-between rounded-[18px] border px-4 py-4"
       style={{
         borderColor: accent.border,
-        background: on ? accent.soft : 'var(--surface)',
+        background:
+          value === null
+            ? 'var(--surface)'
+            : `color-mix(in srgb, ${accent.color} 20%, var(--surface) 80%)`,
       }}
     >
       <div className="text-[0.72rem] uppercase tracking-[0.14em]" style={{ color: accent.color }}>
         Boolean tile
       </div>
       <div className="text-[clamp(1.35rem,1.1rem+0.9vw,2.1rem)] font-semibold tracking-[-0.04em] text-[var(--text)]">
-        {value === null ? '--' : on ? 'ENABLED' : 'DISABLED'}
+        {value === null ? '--' : value ? 'ENABLED' : 'DISABLED'}
       </div>
       <div className="text-[0.78rem] leading-6 text-[var(--text-muted)]">{topic?.valueText ?? 'Waiting for live state.'}</div>
+    </div>
+  )
+}
+
+function BooleanRendererPreview({
+  renderer,
+}: {
+  renderer: WidgetRendererId
+}) {
+  const booleanHelper = 'Bind Telemetry/Robot/Running LED or Telemetry/Robot/Stopped LED.'
+  const buttonHelper = 'Bind /robot/sim/led_enabled or any writable boolean topic.'
+
+  if (renderer === 'boolean-button') {
+    return (
+      <div className="grid h-full min-h-0 content-between gap-3">
+        <BooleanButtonView value={null} topic={null} density="compact" preview />
+        <div className="text-[0.74rem] leading-6 text-[var(--text-muted)]">{buttonHelper}</div>
+      </div>
+    )
+  }
+
+  if (renderer === 'boolean-light') {
+    return <BooleanLightView value={null} density="compact" />
+  }
+
+  if (renderer === 'boolean-pill') {
+    return (
+      <div className="grid h-full min-h-0 content-between gap-3">
+        <BooleanPillView value={null} />
+        <div className="text-[0.74rem] leading-6 text-[var(--text-muted)]">{booleanHelper}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid h-full min-h-0 content-between gap-3">
+      <BooleanTileView value={null} topic={null} />
+      <div className="text-[0.74rem] leading-6 text-[var(--text-muted)]">{booleanHelper}</div>
     </div>
   )
 }
@@ -572,14 +817,168 @@ function TextTileView({
   )
 }
 
+function raspberryMetricTone(value: number | null, warningThreshold: number, criticalThreshold: number): WorkspaceWidgetTone {
+  if (value === null) {
+    return 'neutral'
+  }
+
+  if (value >= criticalThreshold) {
+    return 'critical'
+  }
+
+  if (value >= warningThreshold) {
+    return 'warning'
+  }
+
+  return 'good'
+}
+
+function RaspberryMetricTile({
+  label,
+  value,
+  units,
+  decimals,
+  detail,
+  warningThreshold,
+  criticalThreshold,
+}: {
+  label: string
+  value: number | null
+  units: string
+  decimals: number
+  detail: string
+  warningThreshold: number
+  criticalThreshold: number
+}) {
+  const tone = raspberryMetricTone(value, warningThreshold, criticalThreshold)
+  const accent = metricToneAccent(tone)
+
+  return (
+    <div
+      className="grid gap-2 rounded-[18px] border bg-[var(--surface)]/76 px-4 py-3"
+      style={{ borderColor: accent.border }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
+        <div className="text-[0.66rem] font-semibold uppercase tracking-[0.14em]" style={{ color: accent.color }}>
+          {tone === 'neutral' ? 'waiting' : tone}
+        </div>
+      </div>
+      <div className="font-mono text-[clamp(1.35rem,1.18rem+0.72vw,2.1rem)] leading-none tracking-[-0.05em] text-[var(--text)]">
+        {formatCompactMetric(value, decimals, units)}
+      </div>
+      <div className="text-[0.74rem] leading-6 text-[var(--text-muted)]">{detail}</div>
+    </div>
+  )
+}
+
+function RaspberryMonitorPreset({
+  widget,
+  topicMap,
+}: {
+  widget: HomeWorkspaceWidget
+  topicMap: Map<string, TelemetryTopic>
+}) {
+  const density = resolveWidgetDensity(widget)
+  const isTall = widget.h > widget.w
+  const layout =
+    widget.w >= 6 && widget.h <= 3
+      ? 'row'
+      : widget.w <= 3 || widget.h >= 5 || isTall
+        ? 'stack'
+        : 'split'
+  const compact = density === 'compact' || widget.h <= 3
+  const availableTopic = topicMap.get(RASPBERRY_AVAILABLE_TOPIC) ?? null
+  const available =
+    availableTopic?.valueKind === 'boolean' && typeof availableTopic.value === 'boolean'
+      ? availableTopic.value
+      : false
+  const cpuTopic = topicMap.get(RASPBERRY_CPU_TOPIC) ?? null
+  const ramTopic = topicMap.get(RASPBERRY_RAM_TOPIC) ?? null
+  const temperatureTopic = topicMap.get(RASPBERRY_TEMPERATURE_TOPIC) ?? null
+
+  const cpuValue = available ? getNumericTopicValue(cpuTopic) : null
+  const ramValue = available ? getNumericTopicValue(ramTopic) : null
+  const temperatureValue = available ? getNumericTopicValue(temperatureTopic) : null
+
+  return (
+    <div className="grid h-full min-h-0 gap-3">
+      <div
+        className={cn(
+          'grid min-h-0 gap-3',
+          layout === 'row' && 'grid-cols-3',
+          layout === 'split' && 'grid-cols-2',
+          layout === 'stack' && 'grid-cols-1',
+        )}
+      >
+        <div className={layout === 'stack' ? undefined : 'min-w-0'}>
+          <RaspberryMetricTile
+            label="CPU Usage"
+            value={cpuValue}
+            units="%"
+            decimals={0}
+            detail={
+              available
+                ? compact
+                  ? cpuTopic?.valueText ?? 'Live'
+                  : cpuTopic?.valueText ?? 'Awaiting sample'
+                : compact
+                  ? 'Baseline'
+                  : 'Awaiting baseline'
+            }
+            warningThreshold={75}
+            criticalThreshold={90}
+          />
+        </div>
+        <div className={layout === 'stack' ? undefined : 'min-w-0'}>
+          <RaspberryMetricTile
+            label="RAM Usage"
+            value={ramValue}
+            units="%"
+            decimals={0}
+            detail={
+              available
+                ? compact
+                  ? ramTopic?.valueText ?? 'Live'
+                  : ramTopic?.valueText ?? 'Awaiting sample'
+                : 'Unavailable'
+            }
+            warningThreshold={75}
+            criticalThreshold={90}
+          />
+        </div>
+        <div className={cn(layout === 'split' && 'col-span-2', layout !== 'stack' && 'min-w-0')}>
+          <RaspberryMetricTile
+            label="Temperature"
+            value={temperatureValue}
+            units="C"
+            decimals={1}
+            detail={
+              available
+                ? compact
+                  ? temperatureTopic?.valueText ?? 'Live'
+                  : temperatureTopic?.valueText ?? 'Awaiting sample'
+                : 'Unavailable'
+            }
+            warningThreshold={65}
+            criticalThreshold={75}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PresetWorkspaceWidgetRenderer({
   widget,
+  topicMap,
   snapshot,
   derived,
   alerts,
   batteryHistory,
 }: {
   widget: HomeWorkspaceWidget
+  topicMap: Map<string, TelemetryTopic>
   snapshot: TelemetrySnapshot
   derived: TelemetryDerivedState
   alerts: AlertItem[]
@@ -594,7 +993,7 @@ function PresetWorkspaceWidgetRenderer({
   }
 
   if (widget.presetId === 'heading-gyro') {
-    return <HeadingPanelBody data={snapshot.heading} />
+    return <HeadingPanelBody data={snapshot.heading} variant="widget" />
   }
 
   if (widget.presetId === 'systems-health') {
@@ -609,6 +1008,23 @@ function PresetWorkspaceWidgetRenderer({
     return <AlertsPanelBody alerts={alerts} />
   }
 
+  if (widget.presetId === 'raspberry-monitor') {
+    return <RaspberryMonitorPreset widget={widget} topicMap={topicMap} />
+  }
+
+  if (widget.presetId === 'camera-stream') {
+    return (
+      <HomeWorkspaceCameraStreamWidget
+        selectedFeedId={widget.config.cameraFeedId}
+        discoveredFeeds={snapshot.bridgeStatus?.discoveredCameraFeeds ?? []}
+      />
+    )
+  }
+
+  if (widget.presetId === 'spatial-view') {
+    return <HomeWorkspaceSpatialViewWidget />
+  }
+
   return (
     <WidgetEmptyState
       title="Preset unavailable"
@@ -620,6 +1036,7 @@ function PresetWorkspaceWidgetRenderer({
 export function HomeWorkspaceWidgetRenderer({
   widget,
   topic,
+  topicMap,
   history,
   snapshot,
   derived,
@@ -628,6 +1045,7 @@ export function HomeWorkspaceWidgetRenderer({
 }: {
   widget: HomeWorkspaceWidget
   topic: TelemetryTopic | null
+  topicMap: Map<string, TelemetryTopic>
   history: WorkspaceHistoryPoint[]
   snapshot: TelemetrySnapshot
   derived: TelemetryDerivedState
@@ -638,6 +1056,7 @@ export function HomeWorkspaceWidgetRenderer({
     return (
       <PresetWorkspaceWidgetRenderer
         widget={widget}
+        topicMap={topicMap}
         snapshot={snapshot}
         derived={derived}
         alerts={alerts}
@@ -649,10 +1068,19 @@ export function HomeWorkspaceWidgetRenderer({
   const density = resolveWidgetDensity(widget)
 
   if (widget.topicKey === null) {
+    if (
+      widget.renderer === 'boolean-button' ||
+      widget.renderer === 'boolean-light' ||
+      widget.renderer === 'boolean-pill' ||
+      widget.renderer === 'boolean-tile'
+    ) {
+      return <BooleanRendererPreview renderer={rendererFallbackForDensity(widget.renderer, 'boolean', density)} />
+    }
+
     return (
       <WidgetEmptyState
         title="Unassigned widget"
-        subtitle="Choose a telemetry topic in widget settings to bind this card to a live data source."
+        subtitle="Choose a telemetry topic in the configure modal to bind this card to a live data source."
       />
     )
   }
@@ -690,8 +1118,12 @@ export function HomeWorkspaceWidgetRenderer({
     return <SparklineView value={numericValue} widget={widget} history={history} />
   }
 
+  if (activeRenderer === 'boolean-button') {
+    return <BooleanButtonView value={booleanValue} topic={topic} density={density} />
+  }
+
   if (activeRenderer === 'boolean-light') {
-    return <BooleanLightView value={booleanValue} />
+    return <BooleanLightView value={booleanValue} density={density} />
   }
 
   if (activeRenderer === 'boolean-pill') {

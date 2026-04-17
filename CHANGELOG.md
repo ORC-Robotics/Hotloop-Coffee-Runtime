@@ -2,7 +2,19 @@
 
 Todas as mudancas relevantes deste projeto sao registradas aqui.
 
-## [0.3.5] - Unreleased
+## [0.3.5] - 2026-04-17
+
+### Added
+- compact `Boolean Button` widgets for writable boolean topics, plus simulated toggles for LED, camera, and LiDAR control
+- a configurable `Camera Stream` preset in the Home Workspace backed by the live discovered feed catalog
+
+### Changed
+- strengthened the Home Workspace builder with quick-delete, keyboard delete, preset config persistence, and tighter widget sizing rules
+- upgraded the embedded Spatial View with `Ctrl`-gated interaction, follow-robot controls, and more usable vertical sizing
+- reworked the Heading / Gyro preset into a denser widget-ready layout for smaller proportions
+
+### Fixed
+- repaired TypeScript narrowing issues blocking the desktop release build pipeline
 
 ## [0.3.4] - 2026-04-13
 

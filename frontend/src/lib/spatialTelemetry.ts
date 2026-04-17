@@ -454,7 +454,10 @@ function correctedPoint(
 function findNearestPointByAngle(
   targetAngleDeg: number,
   points: SpatialLidarLocalPoint[],
-) {
+): {
+  point: SpatialLidarLocalPoint | null
+  angleDeltaDeg: number
+} {
   let nearest: SpatialLidarLocalPoint | null = null
   let nearestAngleDelta = Number.POSITIVE_INFINITY
 
@@ -566,9 +569,11 @@ export function computeSpatialScanRegistration(
             return
           }
 
+          const nearestPoint = nearest.point
+
           const residualMm = Math.hypot(
-            nearest.point.xMm - corrected.xMm,
-            nearest.point.yMm - corrected.yMm,
+            nearestPoint.xMm - corrected.xMm,
+            nearestPoint.yMm - corrected.yMm,
           )
 
           if (residualMm > REGISTRATION_POINT_RESIDUAL_LIMIT_MM) {

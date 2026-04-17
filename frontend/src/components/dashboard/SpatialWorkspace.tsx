@@ -267,8 +267,10 @@ export function SpatialWorkspace() {
           goalPreview={viewModel.goalPreview}
           replaySelection={viewModel.replaySelection}
           viewport={viewModel.viewport}
+          followRobot={viewModel.followRobot}
           onPanViewport={viewModel.panViewport}
           onZoomViewport={viewModel.zoomViewport}
+          onToggleFollowRobot={viewModel.toggleFollowRobot}
           onCenterRobot={viewModel.centerOnRobot}
           onResetView={viewModel.resetView}
           onClearTrail={viewModel.clearTrail}
@@ -280,6 +282,7 @@ export function SpatialWorkspace() {
           onArmGoalPreview={viewModel.armGoalPreview}
           onDisarmGoalPreview={viewModel.disarmGoalPreview}
           onClearGoalPreview={viewModel.clearGoalPreview}
+          requireCtrlForInteraction
         />
       </DashboardCard>
 

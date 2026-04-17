@@ -12,6 +12,7 @@ import type {
   BridgeStatus,
   ControlModeFeed,
   ControlModeState,
+  DiscoveredCameraFeed,
   PlanarPoseData,
   RemoteDriverAction,
   RemoteDriverFeed,
@@ -32,6 +33,15 @@ import type {
 
 const TICK_MS = 150
 const HEARTBEAT_TIMEOUT_MS = 650
+const SIM_RUNNING_LED_TOPIC = 'Telemetry/Robot/Running LED'
+const SIM_STOPPED_LED_TOPIC = 'Telemetry/Robot/Stopped LED'
+const SIM_RASPBERRY_AVAILABLE_TOPIC = 'Telemetry/Robot/Raspberry/Available'
+const SIM_RASPBERRY_CPU_TOPIC = 'Telemetry/Robot/Raspberry/CPU Usage (%)'
+const SIM_RASPBERRY_RAM_TOPIC = 'Telemetry/Robot/Raspberry/RAM Usage (%)'
+const SIM_RASPBERRY_TEMPERATURE_TOPIC = 'Telemetry/Robot/Raspberry/Temperature (C)'
+const SIM_LED_ENABLED_TOPIC = '/robot/sim/led_enabled'
+const SIM_CAMERA_ENABLED_TOPIC = '/robot/sim/camera_enabled'
+const SIM_LIDAR_ENABLED_TOPIC = '/robot/sim/lidar_enabled'
 
 type SimulationTuning = {
   headingBiasDeg: number
@@ -54,6 +64,12 @@ type SimulationPoseState = {
   yawDeg: number
   sequence: number
   lastUpdateMs: number | null
+}
+
+type SimulationActuatorState = {
+  ledEnabled: boolean
+  cameraEnabled: boolean
+  lidarEnabled: boolean
 }
 
 type TelemetryListener = (snapshot: TelemetrySnapshot) => void
@@ -121,6 +137,59 @@ function createSimulationBridgeStatus(timestamp: string): BridgeStatus {
     lastSyncAt: timestamp,
     message: 'Simulation data source active.',
   }
+}
+
+function createSimulationCameraFrameUrl(timestampMs: number) {
+  const frameTimestampMs = Math.floor(timestampMs / 450) * 450
+  const phase = (frameTimestampMs / 180) % 960
+  const obstacleX = Math.round((phase * 0.78) % 760)
+  const seconds = new Date(frameTimestampMs).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#0f172a" />
+          <stop offset="100%" stop-color="#111827" />
+        </linearGradient>
+      </defs>
+      <rect width="960" height="540" rx="32" fill="url(#bg)" />
+      <rect x="44" y="42" width="872" height="456" rx="24" fill="#0b1220" stroke="#334155" stroke-width="4" />
+      <path d="M120 430 C250 340 310 320 430 320 S640 360 820 210" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round" />
+      <rect x="${obstacleX + 120}" y="210" width="120" height="150" rx="20" fill="#f97316" opacity="0.84" />
+      <circle cx="${obstacleX + 420}" cy="182" r="26" fill="#22c55e" opacity="0.9" />
+      <text x="76" y="96" fill="#e2e8f0" font-size="34" font-family="IBM Plex Mono, monospace">SIM CAMERA</text>
+      <text x="76" y="140" fill="#94a3b8" font-size="24" font-family="IBM Plex Mono, monospace">Operator feed ${seconds}</text>
+      <text x="76" y="472" fill="#cbd5e1" font-size="22" font-family="IBM Plex Mono, monospace">Front lane locked | detection overlay enabled</text>
+    </svg>
+  `
+
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+}
+
+function createSimulationDiscoveredCameraFeeds(
+  actuators: SimulationActuatorState,
+  timestampMs: number,
+): DiscoveredCameraFeed[] {
+  if (!actuators.cameraEnabled) {
+    return []
+  }
+
+  return [
+    {
+      id: 'sim-front-camera',
+      label: 'Simulation Front Cam',
+      url: createSimulationCameraFrameUrl(timestampMs),
+      kind: 'snapshot',
+      connected: true,
+      source: 'simulation',
+      description: 'Simulated operator camera feed.',
+      origin: 'networktables',
+    },
+  ]
 }
 
 function createSimulationControlMode(timestamp: string): ControlModeState {
@@ -255,12 +324,73 @@ function corridorStatus(snapshot: TelemetrySnapshot) {
   return 'CLEAR_LANE'
 }
 
+function createSimulatedPlatformMetrics(
+  snapshot: TelemetrySnapshot,
+  remoteDriver: RemoteDriverStatus,
+  actuators: SimulationActuatorState,
+  timestampMs: number,
+) {
+  const motionLoad = clamp(
+    Math.abs(snapshot.commands.forward) * 0.46 +
+      Math.abs(snapshot.commands.center) * 0.24 +
+      Math.abs(snapshot.commands.rotation) * 0.3,
+    0,
+    1,
+  )
+  const sessionLoad =
+    remoteDriver.mode === 'autonomous' ? 0.22 : remoteDriver.mode === 'teleop' ? 0.28 : 0.08
+  const heartbeatLoad = remoteDriver.heartbeatFresh ? 0.1 : 0
+  const runningLed = actuators.ledEnabled
+  const cpuUsagePercent = clamp(
+    24 +
+      sessionLoad * 72 +
+      motionLoad * 26 +
+      heartbeatLoad * 18 +
+      Math.sin(timestampMs / 1200) * 4.5 +
+      Math.cos(timestampMs / 3300) * 2.8,
+    12,
+    96,
+  )
+  const ramUsagePercent = clamp(
+    41 +
+      sessionLoad * 16 +
+      motionLoad * 9 +
+      Math.sin(timestampMs / 5400 + 0.6) * 3.4,
+    22,
+    90,
+  )
+  const temperatureC = clamp(
+    42 +
+      sessionLoad * 22 +
+      motionLoad * 14 +
+      heartbeatLoad * 5 +
+      Math.sin(timestampMs / 2500 + 1.1) * 2.4,
+    34,
+    81,
+  )
+
+  return {
+    runningLed,
+    stoppedLed: !actuators.ledEnabled,
+    raspberryAvailable: true,
+    cpuUsagePercent: Math.round(cpuUsagePercent * 10) / 10,
+    ramUsagePercent: Math.round(ramUsagePercent * 10) / 10,
+    temperatureC: Math.round(temperatureC * 10) / 10,
+  }
+}
+
 class SimulationEngine {
   private tuning: SimulationTuning = {
     headingBiasDeg: 0,
     frontDistanceBiasMm: 0,
     batteryBiasV: 0,
     commandGain: 1,
+  }
+
+  private actuators: SimulationActuatorState = {
+    ledEnabled: true,
+    cameraEnabled: true,
+    lidarEnabled: true,
   }
 
   private driveInput: DriveInputState = {
@@ -334,6 +464,7 @@ class SimulationEngine {
 
     this.bridgeStatus = {
       ...this.bridgeStatus,
+      discoveredCameraFeeds: createSimulationDiscoveredCameraFeeds(this.actuators, timestampMs),
       lastSyncAt: timestamp,
       message: 'Simulation data source active.',
     }
@@ -495,6 +626,14 @@ class SimulationEngine {
       base.reactive.decision = `Simulation autonomous routine following ${targetLabel}.`
     }
 
+    if (!this.actuators.lidarEnabled) {
+      base.systems.lidarHealthy = false
+      base.systems.validScan = false
+      base.reactive.state = 'LIDAR_DISABLED'
+      base.reactive.decision = 'Simulation lidar toggle is off.'
+      base.reactive.driveControl = 'Manual lidar disable is active in the operator workspace.'
+    }
+
     const simulationPose = this.advanceSimulationPose(base, timestampMs)
     base.poseSources = {
       ...createDefaultPoseSources(),
@@ -587,6 +726,10 @@ class SimulationEngine {
   }
 
   private buildCatalog(): TelemetryCatalogFeed {
+    const timestampMs = Number.isFinite(Date.parse(this.snapshot.timestamp))
+      ? Date.parse(this.snapshot.timestamp)
+      : Date.now()
+    const platformMetrics = createSimulatedPlatformMetrics(this.snapshot, this.remoteDriver, this.actuators, timestampMs)
     const topics = [
       createTopic('/robot/battery/voltage', 'Battery Voltage', 'telemetry', this.snapshot.battery.voltageV),
       createTopic('/robot/battery/percentage', 'Battery Percentage', 'telemetry', this.snapshot.battery.stateOfCharge * 100),
@@ -640,10 +783,28 @@ class SimulationEngine {
         persistent: true,
         isWritable: true,
       }),
+      createTopic(SIM_LED_ENABLED_TOPIC, 'LED Enabled', 'config', this.actuators.ledEnabled, {
+        persistent: true,
+        isWritable: true,
+      }),
+      createTopic(SIM_CAMERA_ENABLED_TOPIC, 'Camera Enabled', 'config', this.actuators.cameraEnabled, {
+        persistent: true,
+        isWritable: true,
+      }),
+      createTopic(SIM_LIDAR_ENABLED_TOPIC, 'LiDAR Enabled', 'config', this.actuators.lidarEnabled, {
+        persistent: true,
+        isWritable: true,
+      }),
       createTopic('/robot/auto/selected_mode', 'Selected Auto Mode', 'auto-mode', currentModeLabel(this.controlMode)),
       createTopic('/robot/auto/requested_mode', 'Requested Auto Mode', 'auto-mode', this.controlMode.requestedModeId ?? '--'),
       createTopic('/robot/auto/sync_status', 'Auto Mode Sync', 'auto-mode', this.controlMode.syncStatus),
       createTopic('/robot/sim/scenario', 'Scenario', 'other', this.snapshot.scenarioId),
+      createTopic(SIM_RUNNING_LED_TOPIC, 'Running LED', 'telemetry', platformMetrics.runningLed),
+      createTopic(SIM_STOPPED_LED_TOPIC, 'Stopped LED', 'telemetry', platformMetrics.stoppedLed),
+      createTopic(SIM_RASPBERRY_AVAILABLE_TOPIC, 'Raspberry Available', 'telemetry', platformMetrics.raspberryAvailable),
+      createTopic(SIM_RASPBERRY_CPU_TOPIC, 'Raspberry CPU Usage', 'telemetry', platformMetrics.cpuUsagePercent),
+      createTopic(SIM_RASPBERRY_RAM_TOPIC, 'Raspberry RAM Usage', 'telemetry', platformMetrics.ramUsagePercent),
+      createTopic(SIM_RASPBERRY_TEMPERATURE_TOPIC, 'Raspberry Temperature', 'telemetry', platformMetrics.temperatureC),
     ]
 
     const scopeCounts = createScopeCounts(topics)
@@ -973,6 +1134,12 @@ class SimulationEngine {
         ...this.remoteDriver,
         gyroAssist: value,
       }
+    } else if (key === SIM_LED_ENABLED_TOPIC && valueKind === 'boolean' && typeof value === 'boolean') {
+      this.actuators.ledEnabled = value
+    } else if (key === SIM_CAMERA_ENABLED_TOPIC && valueKind === 'boolean' && typeof value === 'boolean') {
+      this.actuators.cameraEnabled = value
+    } else if (key === SIM_LIDAR_ENABLED_TOPIC && valueKind === 'boolean' && typeof value === 'boolean') {
+      this.actuators.lidarEnabled = value
     } else if (key === '/robot/sim/heading_bias_deg' && valueKind === 'number' && typeof value === 'number') {
       this.tuning.headingBiasDeg = clamp(value, -45, 45)
     } else if (key === '/robot/sim/front_distance_bias_mm' && valueKind === 'number' && typeof value === 'number') {

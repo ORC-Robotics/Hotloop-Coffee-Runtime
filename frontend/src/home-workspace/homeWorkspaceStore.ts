@@ -11,6 +11,7 @@ export type HomeWorkspaceWidgetRenderer =
   | 'gauge'
   | 'bar'
   | 'sparkline'
+  | 'boolean-button'
   | 'boolean-light'
   | 'boolean-pill'
   | 'boolean-tile'
@@ -25,6 +26,10 @@ export interface HomeWorkspaceWidgetConfig {
   warningMax: number | null
   criticalMin: number | null
   criticalMax: number | null
+}
+
+export interface HomeWorkspacePresetWidgetConfig {
+  cameraFeedId: string | null
 }
 
 interface HomeWorkspaceWidgetBase {
@@ -46,6 +51,7 @@ export interface HomeWorkspaceTopicWidget extends HomeWorkspaceWidgetBase {
 export interface HomeWorkspacePresetWidget extends HomeWorkspaceWidgetBase {
   kind: 'preset'
   presetId: HomeWorkspacePresetId
+  config: HomeWorkspacePresetWidgetConfig
 }
 
 export type HomeWorkspaceWidget = HomeWorkspaceTopicWidget | HomeWorkspacePresetWidget
@@ -84,7 +90,13 @@ export const HOME_WORKSPACE_GRID_GAP_PX = 12
 export const HOME_WORKSPACE_MIN_WIDGET_W = 2
 export const HOME_WORKSPACE_MAX_WIDGET_W = HOME_WORKSPACE_GRID_COLUMNS
 export const HOME_WORKSPACE_MIN_WIDGET_H = 2
-export const HOME_WORKSPACE_MAX_WIDGET_H = 8
+export const HOME_WORKSPACE_MAX_WIDGET_H = 14
+const HOME_WORKSPACE_BOOLEAN_LIGHT_MIN_WIDGET_W = 1
+const HOME_WORKSPACE_BOOLEAN_LIGHT_MIN_WIDGET_H = 2
+const HOME_WORKSPACE_SPATIAL_VIEW_MIN_WIDGET_W = 6
+const HOME_WORKSPACE_SPATIAL_VIEW_MIN_WIDGET_H = 4
+const HOME_WORKSPACE_DEFAULT_MAX_WIDGET_H = 8
+const HOME_WORKSPACE_SPATIAL_VIEW_MAX_WIDGET_H = 14
 
 function createId(prefix: string) {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -112,6 +124,7 @@ function sanitizeRenderer(value: unknown): HomeWorkspaceWidgetRenderer {
     value === 'gauge' ||
     value === 'bar' ||
     value === 'sparkline' ||
+    value === 'boolean-button' ||
     value === 'boolean-light' ||
     value === 'boolean-pill' ||
     value === 'boolean-tile' ||
@@ -130,6 +143,12 @@ export function createDefaultWidgetConfig(): HomeWorkspaceWidgetConfig {
     warningMax: null,
     criticalMin: null,
     criticalMax: null,
+  }
+}
+
+export function createDefaultPresetWidgetConfig(): HomeWorkspacePresetWidgetConfig {
+  return {
+    cameraFeedId: null,
   }
 }
 
@@ -162,9 +181,64 @@ export function isHomeWorkspacePresetWidget(widget: HomeWorkspaceWidget): widget
   return widget.kind === 'preset'
 }
 
+export function getHomeWorkspaceWidgetMinSize(widget: HomeWorkspaceWidget) {
+  if (
+    isHomeWorkspaceTopicWidget(widget) &&
+    (widget.renderer === 'boolean-light' || widget.renderer === 'boolean-button')
+  ) {
+    return {
+      w: HOME_WORKSPACE_BOOLEAN_LIGHT_MIN_WIDGET_W,
+      h: HOME_WORKSPACE_BOOLEAN_LIGHT_MIN_WIDGET_H,
+    }
+  }
+
+  if (isHomeWorkspacePresetWidget(widget) && widget.presetId === 'spatial-view') {
+    return {
+      w: HOME_WORKSPACE_SPATIAL_VIEW_MIN_WIDGET_W,
+      h: HOME_WORKSPACE_SPATIAL_VIEW_MIN_WIDGET_H,
+    }
+  }
+
+  return {
+    w: HOME_WORKSPACE_MIN_WIDGET_W,
+    h: HOME_WORKSPACE_MIN_WIDGET_H,
+  }
+}
+
+function sanitizePresetWidgetConfig(value: unknown): HomeWorkspacePresetWidgetConfig {
+  if (!value || typeof value !== 'object') {
+    return createDefaultPresetWidgetConfig()
+  }
+
+  const candidate = value as Partial<HomeWorkspacePresetWidgetConfig>
+
+  return {
+    cameraFeedId:
+      typeof candidate.cameraFeedId === 'string' && candidate.cameraFeedId.trim().length
+        ? candidate.cameraFeedId.trim()
+        : null,
+  }
+}
+
+export function getHomeWorkspaceWidgetMaxSize(widget: HomeWorkspaceWidget) {
+  if (isHomeWorkspacePresetWidget(widget) && widget.presetId === 'spatial-view') {
+    return {
+      w: HOME_WORKSPACE_MAX_WIDGET_W,
+      h: HOME_WORKSPACE_SPATIAL_VIEW_MAX_WIDGET_H,
+    }
+  }
+
+  return {
+    w: HOME_WORKSPACE_MAX_WIDGET_W,
+    h: HOME_WORKSPACE_DEFAULT_MAX_WIDGET_H,
+  }
+}
+
 function clampWidgetRect<T extends HomeWorkspaceWidget>(widget: T): T {
-  const w = Math.max(HOME_WORKSPACE_MIN_WIDGET_W, Math.min(HOME_WORKSPACE_MAX_WIDGET_W, widget.w))
-  const h = Math.max(HOME_WORKSPACE_MIN_WIDGET_H, Math.min(HOME_WORKSPACE_MAX_WIDGET_H, widget.h))
+  const minimums = getHomeWorkspaceWidgetMinSize(widget)
+  const maximums = getHomeWorkspaceWidgetMaxSize(widget)
+  const w = Math.max(minimums.w, Math.min(maximums.w, widget.w))
+  const h = Math.max(minimums.h, Math.min(maximums.h, widget.h))
   const x = Math.max(0, Math.min(HOME_WORKSPACE_GRID_COLUMNS - w, widget.x))
   const y = Math.max(0, widget.y)
 
@@ -195,8 +269,8 @@ export function findFreeWidgetPosition(
   preferredX = 0,
   preferredY = 0,
 ) {
-  const w = Math.max(HOME_WORKSPACE_MIN_WIDGET_W, Math.min(HOME_WORKSPACE_MAX_WIDGET_W, Math.round(width)))
-  const h = Math.max(HOME_WORKSPACE_MIN_WIDGET_H, Math.min(HOME_WORKSPACE_MAX_WIDGET_H, Math.round(height)))
+  const w = Math.max(1, Math.min(HOME_WORKSPACE_MAX_WIDGET_W, Math.round(width)))
+  const h = Math.max(1, Math.min(HOME_WORKSPACE_MAX_WIDGET_H, Math.round(height)))
   const startY = Math.max(0, Math.round(preferredY))
   const startX = Math.max(0, Math.min(HOME_WORKSPACE_GRID_COLUMNS - w, Math.round(preferredX)))
 
@@ -245,6 +319,30 @@ export function createHomeWorkspaceWidget(
   return placeWidgetInLayout(widgets, base)
 }
 
+export function createHomeWorkspaceBooleanStarterWidget(
+  widgets: HomeWorkspaceWidget[],
+): HomeWorkspaceTopicWidget {
+  return createHomeWorkspaceWidget(widgets, {
+    title: 'Boolean LED',
+    topicKey: null,
+    renderer: 'boolean-light',
+    w: 1,
+    h: 2,
+  })
+}
+
+export function createHomeWorkspaceBooleanButtonStarterWidget(
+  widgets: HomeWorkspaceWidget[],
+): HomeWorkspaceTopicWidget {
+  return createHomeWorkspaceWidget(widgets, {
+    title: 'Boolean Button',
+    topicKey: null,
+    renderer: 'boolean-button',
+    w: 1,
+    h: 2,
+  })
+}
+
 export function createHomeWorkspacePresetWidget(
   widgets: HomeWorkspaceWidget[],
   presetId: HomeWorkspacePresetId,
@@ -260,6 +358,10 @@ export function createHomeWorkspacePresetWidget(
     y: sanitizeInteger(overrides.y, 0),
     w: sanitizeInteger(overrides.w, preset?.defaultWidth ?? 5),
     h: sanitizeInteger(overrides.h, preset?.defaultHeight ?? 4),
+    config: {
+      ...createDefaultPresetWidgetConfig(),
+      ...sanitizePresetWidgetConfig(overrides.config),
+    },
   }
 
   return placeWidgetInLayout(widgets, base)
@@ -298,6 +400,8 @@ function presetFromLegacyModuleId(moduleId: string | null | undefined): HomeWork
   if (normalized === 'systems' || normalized === 'systems-health') return 'systems-health'
   if (normalized === 'commands') return 'commands'
   if (normalized === 'alerts') return 'alerts'
+  if (normalized === 'raspberry' || normalized === 'raspberry-monitor') return 'raspberry-monitor'
+  if (normalized === 'spatial' || normalized === 'spatial-view') return 'spatial-view'
   return null
 }
 
@@ -341,6 +445,7 @@ function sanitizePresetWidget(
     y: sanitizeInteger(candidate.y, 0),
     w: sanitizeInteger(candidate.w, getHomeWorkspacePresetDefinition(candidate.presetId)?.defaultWidth ?? 5),
     h: sanitizeInteger(candidate.h, getHomeWorkspacePresetDefinition(candidate.presetId)?.defaultHeight ?? 4),
+    config: sanitizePresetWidgetConfig(candidate.config),
   })
 }
 

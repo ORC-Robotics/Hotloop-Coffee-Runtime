@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDashboardPreferences } from '../../preferences/useDashboardPreferences'
 import type { CameraFeedConfig } from '../../preferences/dashboardPreferencesStore'
 import type { ResolvedCameraFeed } from '../../lib/cameraFeeds'
 import { DashboardCard } from './DashboardCard'
+import { CameraFeedMedia, type CameraFeedResourceStatus } from './CameraFeedMedia'
 import { StatusBadge } from './StatusBadge'
 
 function hostLabel(url: string) {
@@ -13,33 +14,6 @@ function hostLabel(url: string) {
   }
 }
 
-function useSnapshotUrl(feed: CameraFeedConfig) {
-  const [tick, setTick] = useState(0)
-
-  useEffect(() => {
-    if (feed.kind !== 'snapshot' || !feed.enabled || !feed.url.trim()) {
-      return
-    }
-
-    const interval = window.setInterval(() => {
-      setTick((current) => current + 1)
-    }, Math.max(250, feed.refreshMs))
-
-    return () => {
-      window.clearInterval(interval)
-    }
-  }, [feed.enabled, feed.kind, feed.refreshMs, feed.url])
-
-  return useMemo(() => {
-    if (feed.kind !== 'snapshot' || !feed.url.trim()) {
-      return feed.url
-    }
-
-    const separator = feed.url.includes('?') ? '&' : '?'
-    return `${feed.url}${separator}_orion=${tick}`
-  }, [feed.kind, feed.url, tick])
-}
-
 function toResolvedManualFeed(feed: CameraFeedConfig): ResolvedCameraFeed {
   return {
     ...feed,
@@ -48,21 +22,7 @@ function toResolvedManualFeed(feed: CameraFeedConfig): ResolvedCameraFeed {
 }
 
 function CameraTile({ feed, compact = false }: { feed: ResolvedCameraFeed; compact?: boolean }) {
-  const [resourceState, setResourceState] = useState<{
-    key: string
-    status: 'loading' | 'live' | 'error'
-  }>({
-    key: '',
-    status: 'loading',
-  })
-  const src = useSnapshotUrl(feed)
-  const resourceKey = `${feed.kind}:${src}`
-  const status =
-    !feed.url.trim()
-      ? 'error'
-      : resourceState.key === resourceKey
-        ? resourceState.status
-        : 'loading'
+  const [status, setStatus] = useState<CameraFeedResourceStatus>('loading')
 
   return (
     <div className="grid gap-2 rounded-[20px] border border-[var(--border)] bg-[var(--surface-alt)]/82 p-3">
@@ -83,35 +43,12 @@ function CameraTile({ feed, compact = false }: { feed: ResolvedCameraFeed; compa
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-[18px] border border-[var(--border)] bg-[var(--background-subtle)]">
-        {feed.url.trim() ? (
-          feed.kind === 'video' ? (
-            <video
-              src={src}
-              autoPlay
-              muted
-              playsInline
-              className={`w-full object-cover ${compact ? 'h-[220px]' : 'h-[300px]'}`}
-              onCanPlay={() => setResourceState({ key: resourceKey, status: 'live' })}
-              onError={() => setResourceState({ key: resourceKey, status: 'error' })}
-            />
-          ) : (
-            <img
-              src={src}
-              alt={feed.label}
-              className={`w-full object-cover ${compact ? 'h-[220px]' : 'h-[300px]'}`}
-              onLoad={() => setResourceState({ key: resourceKey, status: 'live' })}
-              onError={() => setResourceState({ key: resourceKey, status: 'error' })}
-            />
-          )
-        ) : (
-          <div className={`flex items-center justify-center text-[0.84rem] text-[var(--text-muted)] ${compact ? 'h-[220px]' : 'h-[300px]'}`}>
-            Configure a stream URL in Settings.
-          </div>
-        )}
-
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[var(--overlay)] to-transparent" />
-      </div>
+      <CameraFeedMedia
+        feed={feed}
+        mediaClassName={compact ? 'h-[220px]' : 'h-[300px]'}
+        showGradient
+        onStatusChange={setStatus}
+      />
     </div>
   )
 }

@@ -4,6 +4,9 @@ export type HomeWorkspacePresetId =
   | 'systems-health'
   | 'commands'
   | 'alerts'
+  | 'raspberry-monitor'
+  | 'camera-stream'
+  | 'spatial-view'
 
 export interface HomeWorkspacePresetDefinition {
   defaultHeight: number
@@ -54,6 +57,30 @@ export const HOME_WORKSPACE_PRESET_DEFINITIONS: HomeWorkspacePresetDefinition[] 
     description: 'Top operational warnings in the current session.',
     defaultWidth: 5,
     defaultHeight: 4,
+  },
+  {
+    id: 'raspberry-monitor',
+    label: 'Raspberry Monitor',
+    defaultTitle: 'Raspberry Monitor',
+    description: 'CPU, RAM and platform temperature from the Raspberry runtime.',
+    defaultWidth: 4,
+    defaultHeight: 4,
+  },
+  {
+    id: 'camera-stream',
+    label: 'Camera Stream',
+    defaultTitle: 'Camera Stream',
+    description: 'Embedded live camera surface using the active robot feed catalog.',
+    defaultWidth: 6,
+    defaultHeight: 4,
+  },
+  {
+    id: 'spatial-view',
+    label: 'Spatial View',
+    defaultTitle: 'Spatial View',
+    description: 'Interactive planar viewer with pan, zoom and local goal preview inside Home Workspace.',
+    defaultWidth: 7,
+    defaultHeight: 5,
   },
 ]
 

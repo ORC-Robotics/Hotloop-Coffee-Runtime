@@ -320,14 +320,15 @@ function drawObservedMap(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel)
     return
   }
 
-  const totalScans = scene.observedMap.scans.length
+  const observedMap = scene.observedMap
+  const totalScans = observedMap.scans.length
 
   ctx.save()
 
-  scene.observedMap.scans.forEach((scan, index) => {
+  observedMap.scans.forEach((scan, index) => {
     const ageRatio = totalScans <= 1 ? 1 : (index + 1) / totalScans
-    const opacity = scene.observedMap.fadeOlderScans ? 0.08 + ageRatio * 0.48 : 0.32
-    const pointRadius = scene.observedMap.fadeOlderScans ? 1.05 + ageRatio * 0.85 : 1.7
+    const opacity = observedMap.fadeOlderScans ? 0.08 + ageRatio * 0.48 : 0.32
+    const pointRadius = observedMap.fadeOlderScans ? 1.05 + ageRatio * 0.85 : 1.7
 
     ctx.fillStyle =
       index === totalScans - 1 ? scene.palette.observedMapRecent : scene.palette.observedMapPoint

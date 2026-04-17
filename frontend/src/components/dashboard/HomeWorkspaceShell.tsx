@@ -102,6 +102,8 @@ export function HomeWorkspaceShell({
     addPage,
     removePage,
     addTopicWidgetToActivePage,
+    addBooleanStarterToActivePage,
+    addBooleanButtonStarterToActivePage,
     addPresetWidgetToActivePage,
     removeWidget,
     updateWidget,
@@ -206,7 +208,7 @@ export function HomeWorkspaceShell({
       </div>
 
       {libraryOpen ? (
-        <div className="relative z-[1] grid gap-3 border-b border-[var(--border)]/65 px-4 py-3 xl:grid-cols-5 xl:px-5">
+        <div className="relative z-[1] grid gap-3 border-b border-[var(--border)]/65 px-4 py-3 xl:grid-cols-4 xl:px-5">
           {HOME_WORKSPACE_PRESET_DEFINITIONS.map((preset) => (
             <div
               key={preset.id}
@@ -225,6 +227,32 @@ export function HomeWorkspaceShell({
               </div>
             </div>
           ))}
+          <div className="rounded-[18px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--success)_10%,var(--surface-alt)_90%)] px-3 py-3">
+            <div className="text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+              Quick Add
+            </div>
+            <div className="mt-2 text-[0.92rem] font-semibold tracking-[-0.03em] text-[var(--text)]">Boolean LED</div>
+            <div className="mt-2 text-[0.76rem] leading-6 text-[var(--text-muted)]">
+              Shortcut for a topic widget already configured with the `Boolean LED` renderer. You can also switch any topic widget to this renderer in the configure modal.
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span>1x2 starter</span>
+              <WorkspaceActionButton onClick={addBooleanStarterToActivePage}>Create</WorkspaceActionButton>
+            </div>
+          </div>
+          <div className="rounded-[18px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--primary)_10%,var(--surface-alt)_90%)] px-3 py-3">
+            <div className="text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+              Quick Add
+            </div>
+            <div className="mt-2 text-[0.92rem] font-semibold tracking-[-0.03em] text-[var(--text)]">Boolean Button</div>
+            <div className="mt-2 text-[0.76rem] leading-6 text-[var(--text-muted)]">
+              Narrow writable boolean toggle for LED, camera, lidar and any other boolean topic with write support.
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span>1x2 starter</span>
+              <WorkspaceActionButton onClick={addBooleanButtonStarterToActivePage}>Create</WorkspaceActionButton>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -259,7 +287,7 @@ export function HomeWorkspaceShell({
         </div>
       </div>
 
-      <div className="relative z-[1] flex-1 min-h-0 p-4 xl:p-5">
+      <div className="relative z-[1] flex-1 min-h-0 overflow-auto p-4 xl:p-5">
         {activePage.widgets.length ? (
           <HomeWorkspaceCanvas
             alerts={alerts}
@@ -284,10 +312,12 @@ export function HomeWorkspaceShell({
               This page is ready for custom widgets
             </div>
             <div className="mt-3 max-w-[56ch] text-[0.88rem] leading-7 text-[var(--text-muted)]">
-              Start with a topic widget or a preset panel, then shape the page around what you want to monitor. Topic widgets stay fully customizable, and presets let you drop complete live panels like Battery Watch or Heading / Gyro straight into the overview board.
+              Start with a topic widget, switch its renderer when needed, or drop a preset panel and shape the page around what you want to monitor. The Boolean LED is available both as a quick-add shortcut and as a renderer inside the widget configure modal.
             </div>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               <WorkspaceActionButton onClick={addTopicWidgetToActivePage}>Add first topic widget</WorkspaceActionButton>
+              <WorkspaceActionButton onClick={addBooleanStarterToActivePage}>Add Boolean LED</WorkspaceActionButton>
+              <WorkspaceActionButton onClick={addBooleanButtonStarterToActivePage}>Add Boolean Button</WorkspaceActionButton>
               <WorkspaceActionButton onClick={() => addPresetWidgetToActivePage('battery-watch')}>Add Battery preset</WorkspaceActionButton>
               <WorkspaceActionButton onClick={addPage} disabled={!canAddPage}>Create another page</WorkspaceActionButton>
             </div>

@@ -223,6 +223,9 @@ export interface SpatialViewModel {
   replaySelection: SpatialReplaySelection | null
   viewport: SpatialViewportState
   poseTransition: SpatialPoseTransitionState
+  followRobot: boolean
+  setFollowRobot: (follow: boolean) => void
+  toggleFollowRobot: () => void
   centerOnRobot: () => void
   resetView: () => void
   clearTrail: () => void
@@ -743,9 +746,11 @@ function computeGoalPreview(
       break
     }
 
-    if (currentKey === goalKey) {
+    const activeKey = currentKey
+
+    if (activeKey === goalKey) {
       const pathCells: SpatialOccupancyCell[] = []
-      let cursor: string | null = currentKey
+      let cursor: string | null = activeKey
 
       while (cursor) {
         const cell = grid.cellsByKey.get(cursor)
@@ -813,15 +818,15 @@ function computeGoalPreview(
       }
     }
 
-    openKeys.delete(currentKey)
+    openKeys.delete(activeKey)
     expandedNodes += 1
 
-    const currentCell = grid.cellsByKey.get(currentKey)
+    const currentCell = grid.cellsByKey.get(activeKey)
     if (!currentCell) {
       continue
     }
 
-    const currentCost = gScore.get(currentKey) ?? Number.POSITIVE_INFINITY
+    const currentCost = gScore.get(activeKey) ?? Number.POSITIVE_INFINITY
     const neighborOffsets = [
       { x: -1, y: -1 },
       { x: 0, y: -1 },
@@ -864,7 +869,7 @@ function computeGoalPreview(
         return
       }
 
-      cameFrom.set(neighborKey, currentKey)
+      cameFrom.set(neighborKey, activeKey)
       gScore.set(neighborKey, tentativeCost)
       fScore.set(neighborKey, tentativeCost + heuristic(neighborCell))
       openKeys.add(neighborKey)
@@ -916,6 +921,7 @@ function observedMapScanFromSelection(
 export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel {
   const [sourceOverride, setSourceOverride] = useState<PoseSourceOverride>('auto')
   const [viewport, setViewport] = useState<SpatialViewportState>(DEFAULT_VIEWPORT)
+  const [followRobot, setFollowRobotState] = useState(false)
   const [trail, setTrail] = useState<SpatialTrailPoint[]>([])
   const [lidarHistory, setLidarHistory] = useState<SpatialBufferedLidarScan[]>([])
   const [observedMapScans, setObservedMapScans] = useState<SpatialObservedMapScan[]>([])
@@ -1104,6 +1110,36 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
     }))
     hasAutoCenteredRef.current = true
   }, [selectedPose.isRenderable, selectedPose.pose.xMm, selectedPose.pose.yMm])
+
+  useEffect(() => {
+    if (
+      !followRobot ||
+      replayMode !== 'live' ||
+      !activePose.available ||
+      activePose.freshness === 'invalid'
+    ) {
+      return
+    }
+
+    setViewport((current) => {
+      if (current.centerXMm === activePose.xMm && current.centerYMm === activePose.yMm) {
+        return current
+      }
+
+      return {
+        ...current,
+        centerXMm: activePose.xMm,
+        centerYMm: activePose.yMm,
+      }
+    })
+  }, [
+    activePose.available,
+    activePose.freshness,
+    activePose.xMm,
+    activePose.yMm,
+    followRobot,
+    replayMode,
+  ])
 
   useEffect(() => {
     const pose = selectedPose.pose
@@ -1452,6 +1488,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
   }
 
   const selectGoalAtWorldPoint = (point: SpatialPathPreviewPoint) => {
+    setFollowRobotState(false)
     setGoalRequest({
       xMm: point.xMm,
       yMm: point.yMm,
@@ -1479,6 +1516,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
       return
     }
 
+    setFollowRobotState(false)
     const nextIndex = Math.round(clamp(index, 0, lidarHistory.length - 1))
     setReplayKey(bufferedLidarKey(lidarHistory[nextIndex]))
   }
@@ -1497,6 +1535,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
   }
 
   const panViewport = (deltaXPx: number, deltaYPx: number) => {
+    setFollowRobotState(false)
     setViewport((current) => ({
       ...current,
       centerXMm: current.centerXMm - deltaXPx / current.zoomPxPerMm,
@@ -1513,6 +1552,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
       return
     }
 
+    setFollowRobotState(false)
     setViewport((current) => {
       const nextZoom = clamp(current.zoomPxPerMm * factor, MIN_ZOOM_PX_PER_MM, MAX_ZOOM_PX_PER_MM)
       if (nextZoom === current.zoomPxPerMm) {
@@ -1530,6 +1570,14 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
         zoomPxPerMm: nextZoom,
       }
     })
+  }
+
+  const setFollowRobot = (follow: boolean) => {
+    setFollowRobotState(follow)
+  }
+
+  const toggleFollowRobot = () => {
+    setFollowRobotState((current) => !current)
   }
 
   return {
@@ -1567,6 +1615,9 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
     replaySelection,
     viewport,
     poseTransition,
+    followRobot,
+    setFollowRobot,
+    toggleFollowRobot,
     centerOnRobot,
     resetView,
     clearTrail,

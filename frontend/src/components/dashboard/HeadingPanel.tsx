@@ -45,7 +45,10 @@ export function HeadingPanel({ data, tone }: HeadingPanelProps) {
   )
 }
 
-export function HeadingPanelBody({ data }: Pick<HeadingPanelProps, 'data'>) {
+export function HeadingPanelBody({
+  data,
+  variant = 'panel',
+}: Pick<HeadingPanelProps, 'data'> & { variant?: 'panel' | 'widget' }) {
   const size = 116
   const center = size / 2
   const outerRadius = 45
@@ -58,6 +61,73 @@ export function HeadingPanelBody({ data }: Pick<HeadingPanelProps, 'data'>) {
         ? 'var(--warning)'
         : 'var(--success)'
   const errorWidth = `${clamp(Math.abs(data.angularErrorDeg) / 30, 0.08, 1) * 100}%`
+
+  if (variant === 'widget') {
+    return (
+      <div className="grid gap-3">
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 px-3.5 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                Heading
+              </div>
+              <div className="mt-1.5 text-[clamp(1.5rem,1.2rem+1vw,2.4rem)] font-semibold leading-none tracking-[-0.08em] text-[var(--text)]">
+                {data.yawDeg.toFixed(1)} deg
+              </div>
+              <div className="mt-2 text-[0.76rem] font-semibold uppercase tracking-[0.12em] text-[var(--success)]">
+                Target {data.targetYawDeg.toFixed(1)} deg
+              </div>
+            </div>
+
+            <svg viewBox={`0 0 ${size} ${size}`} className="h-[74px] w-[74px] shrink-0">
+              <circle cx={center} cy={center} r={outerRadius + 7} fill="none" stroke="var(--gridLine)" strokeWidth="1.2" />
+              <circle cx={center} cy={center} r={outerRadius} fill="none" stroke="var(--gaugeTrack)" strokeWidth="3.2" />
+              <line
+                x1={center}
+                y1={center}
+                x2={yawPoint.x}
+                y2={yawPoint.y}
+                stroke="var(--accent)"
+                strokeWidth="4"
+                strokeLinecap="round"
+              />
+              <circle cx={center} cy={center} r="5.5" fill="var(--surface-raised)" stroke="var(--text)" strokeWidth="1.2" />
+            </svg>
+          </div>
+        </div>
+
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/84 px-3.5 py-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                Angular Error
+              </div>
+              <div className="mt-1.5 text-[clamp(1.35rem,1.12rem+0.92vw,2.15rem)] font-semibold leading-none tracking-[-0.08em] text-[var(--text)]">
+                {Math.abs(data.angularErrorDeg).toFixed(1)} deg
+              </div>
+            </div>
+
+            <div className="pb-1 text-right text-[0.74rem] font-semibold uppercase tracking-[0.14em]" style={{ color: errorColor }}>
+              <div>{angularStatus(data.angularErrorDeg)}</div>
+              <div className="mt-1 text-[0.7rem] text-[var(--text-muted)]">
+                Lateral {data.lateralErrorM.toFixed(2)} m
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 h-2.5 rounded-full bg-[var(--background-subtle)]">
+            <div
+              className="h-2.5 rounded-full transition-all duration-200"
+              style={{
+                width: errorWidth,
+                background: errorColor,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="grid gap-3 xl:grid-cols-2">
