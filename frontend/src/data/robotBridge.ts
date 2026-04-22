@@ -352,22 +352,28 @@ export async function sendControlInputState(
     payload,
   }
 
-  const response = await fetch(CONTROL_INPUT_STATE_URL, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-  })
+  try {
+    const response = await fetch(CONTROL_INPUT_STATE_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+    })
 
-  const result = (await response.json()) as ControlInputResponse
+    const result = (await response.json()) as Omit<ControlInputResponse, 'ok'>
 
-  if (!response.ok) {
-    return result
+    return {
+      ok: response.ok,
+      ...result,
+    }
+  } catch {
+    return {
+      ok: false,
+      error: 'Control input stream unavailable.',
+    }
   }
-
-  return result
 }
 
 export async function requestControlModeChange(modeId: string): Promise<ControlModeFeed> {

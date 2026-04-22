@@ -554,17 +554,16 @@ function useRemoteDriverController() {
         setPreview(inputSample)
       })
 
-      try {
-        const controlResponse = await sendControlInputState(controlSnapshot)
-        if (!cancelled && controlResponse.bridgeStatus) {
+      const controlResponse = await sendControlInputState(controlSnapshot)
+      if (!cancelled) {
+        if (controlResponse.bridgeStatus) {
           setBridgeStatus(controlResponse.bridgeStatus)
-        }
-      } catch {
-        if (!cancelled) {
-          setCommandState({
-            tone: 'warning',
-            message: 'Control snapshot stream is unavailable. Hotloop is falling back to remote-driver packets only.',
-          })
+        } else if (!controlResponse.ok) {
+          setBridgeStatus((previous) => ({
+            ...previous,
+            robotLinkConnected: false,
+            message: 'Control input stream degraded.',
+          }))
         }
       }
 

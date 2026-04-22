@@ -1008,6 +1008,7 @@ class SimulationEngine {
   sendControlInputState(payload: import('../types/telemetry').ControlInputSnapshot): import('../types/telemetry').ControlInputResponse {
     void payload
     return {
+      ok: true,
       bridgeStatus: this.bridgeStatus,
       message: 'Simulation control snapshot accepted.',
     }

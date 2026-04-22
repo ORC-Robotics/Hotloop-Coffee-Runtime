@@ -369,6 +369,7 @@ export interface RemoteDriverResponse {
 }
 
 export interface ControlInputResponse {
+  ok: boolean
   message?: string
   error?: string
   bridgeStatus?: BridgeStatus
