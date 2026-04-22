@@ -650,6 +650,7 @@ class ControlInputManager:
         self.last_snapshot_at: str | None = None
         self._max_axis_count = 0
         self._max_button_count = 0
+        self._named_axis_keys: set[str] = set()
         self._named_button_keys: set[str] = set()
 
     @staticmethod
@@ -741,9 +742,14 @@ class ControlInputManager:
         for stale_button in range(len(buttons), self._max_button_count):
             publications.append(self._publish_button_state(f'Control/Input/Gamepad/Buttons/{stale_button}', {}))
 
+        current_named_axes: set[str] = set()
         for name, value in named_axes_raw.items():
             safe_name = self._safe_key(name)
+            current_named_axes.add(safe_name)
             publications.append(self.client.put_number(f'Control/Input/Gamepad/Named Axes/{safe_name}', self._number(value, 0.0, (-1.0, 1.0))))
+
+        for stale_name in self._named_axis_keys - current_named_axes:
+            publications.append(self.client.put_number(f'Control/Input/Gamepad/Named Axes/{stale_name}', 0.0))
 
         current_named_buttons: set[str] = set()
         for name, raw_button in named_buttons_raw.items():
@@ -763,6 +769,7 @@ class ControlInputManager:
         self.last_snapshot_at = iso_now()
         self._max_axis_count = max(self._max_axis_count, len(axes))
         self._max_button_count = max(self._max_button_count, len(buttons))
+        self._named_axis_keys = current_named_axes
         self._named_button_keys = current_named_buttons
         return {'message': 'Control input snapshot published.'}, HTTPStatus.ACCEPTED
 

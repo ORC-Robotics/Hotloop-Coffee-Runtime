@@ -352,14 +352,22 @@ export async function sendControlInputState(
     payload,
   }
 
-  return (await fetch(CONTROL_INPUT_STATE_URL, {
+  const response = await fetch(CONTROL_INPUT_STATE_URL, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(command),
-  }).then((response) => response.json())) as ControlInputResponse
+  })
+
+  const result = (await response.json()) as ControlInputResponse
+
+  if (!response.ok) {
+    return result
+  }
+
+  return result
 }
 
 export async function requestControlModeChange(modeId: string): Promise<ControlModeFeed> {
