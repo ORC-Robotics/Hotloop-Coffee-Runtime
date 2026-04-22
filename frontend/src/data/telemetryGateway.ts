@@ -4,6 +4,7 @@ import { getTelemetryMode } from '../telemetry-mode/telemetryModeStore'
 import type {
   BridgeConnectionPreference,
   BridgeConnectionResponse,
+  ControlInputResponse,
   ControlModeFeed,
   RemoteDriverAction,
   RemoteDriverResponse,
@@ -67,6 +68,10 @@ export async function sendRemoteDriverAction(
   sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
   return activeSource().sendRemoteDriverAction(action, source, sessionMode)
+}
+
+export async function sendControlInputState(payload: import('../types/telemetry').ControlInputSnapshot): Promise<ControlInputResponse> {
+  return activeSource().sendControlInputState(payload)
 }
 
 export async function getBridgeConnectionStatus(): Promise<BridgeConnectionResponse> {

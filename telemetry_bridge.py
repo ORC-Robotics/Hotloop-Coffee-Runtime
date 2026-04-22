@@ -643,11 +643,136 @@ class RemoteDriverManager:
         }, HTTPStatus.ACCEPTED
 
 
+class ControlInputManager:
+    def __init__(self, client: NTClient):
+        self.client = client
+        self.sequence = 0
+        self.last_snapshot_at: str | None = None
+        self._max_axis_count = 0
+        self._max_button_count = 0
+        self._named_button_keys: set[str] = set()
+
+    @staticmethod
+    def _safe_key(name: Any) -> str:
+        cleaned = ''.join(ch if str(ch).isalnum() else '_' for ch in str(name or '').strip())
+        cleaned = cleaned.strip('_')
+        return cleaned or 'Unknown'
+
+    @staticmethod
+    def _bool(value: Any) -> bool:
+        return bool(value)
+
+    @staticmethod
+    def _number(value: Any, default: float = 0.0, clamp: tuple[float, float] | None = None) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = default
+        if not math.isfinite(numeric):
+            numeric = default
+        if clamp is not None:
+            numeric = max(clamp[0], min(clamp[1], numeric))
+        return numeric
+
+    def _publish_button_state(self, prefix: str, button: dict[str, Any]) -> bool:
+        return all((
+            self.client.put_bool(f"{prefix}/Pressed", self._bool(button.get('pressed'))),
+            self.client.put_bool(f"{prefix}/Touched", self._bool(button.get('touched'))),
+            self.client.put_number(f"{prefix}/Value", self._number(button.get('value'), 0.0, (0.0, 1.0))),
+        ))
+
+    def publish_state(self, snapshot: Any) -> tuple[dict[str, Any], HTTPStatus]:
+        if not self.client.is_connected():
+            return {'error': 'robot link offline'}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        if not isinstance(snapshot, dict):
+            return {'error': 'snapshot payload must be an object'}, HTTPStatus.BAD_REQUEST
+
+        gamepad = snapshot.get('gamepad') if isinstance(snapshot.get('gamepad'), dict) else {}
+        keyboard = snapshot.get('keyboard') if isinstance(snapshot.get('keyboard'), dict) else {}
+        combined = snapshot.get('combined') if isinstance(snapshot.get('combined'), dict) else {}
+
+        source = str(snapshot.get('source', 'ORION')).strip() or 'ORION'
+        input_source = str(snapshot.get('inputSource', 'idle')).strip() or 'idle'
+        timestamp_ms = int(self._number(snapshot.get('timestampMs'), 0.0))
+        window_active = self._bool(snapshot.get('windowActive'))
+
+        axes_raw = gamepad.get('axes') if isinstance(gamepad.get('axes'), list) else []
+        buttons_raw = gamepad.get('buttons') if isinstance(gamepad.get('buttons'), list) else []
+        named_axes_raw = gamepad.get('namedAxes') if isinstance(gamepad.get('namedAxes'), dict) else {}
+        named_buttons_raw = gamepad.get('namedButtons') if isinstance(gamepad.get('namedButtons'), dict) else {}
+
+        axes = [self._number(value, 0.0, (-1.0, 1.0)) for value in axes_raw[:16]]
+        buttons = [item if isinstance(item, dict) else {} for item in buttons_raw[:32]]
+
+        publications = [
+            self.client.put_number('Control/Input/Sequence', float(self.sequence + 1)),
+            self.client.put_number('Control/Input/Timestamp Ms', float(timestamp_ms)),
+            self.client.put_string('Control/Input/Source', source),
+            self.client.put_string('Control/Input/Input Source', input_source),
+            self.client.put_bool('Control/Input/Window Active', window_active),
+            self.client.put_number('Control/Input/Combined/X', self._number(combined.get('x'), 0.0, (-1.0, 1.0))),
+            self.client.put_number('Control/Input/Combined/Y', self._number(combined.get('y'), 0.0, (-1.0, 1.0))),
+            self.client.put_number('Control/Input/Combined/Z', self._number(combined.get('z'), 0.0, (-1.0, 1.0))),
+            self.client.put_bool('Control/Input/Keyboard/Left', self._bool(keyboard.get('left'))),
+            self.client.put_bool('Control/Input/Keyboard/Right', self._bool(keyboard.get('right'))),
+            self.client.put_bool('Control/Input/Keyboard/Forward', self._bool(keyboard.get('forward'))),
+            self.client.put_bool('Control/Input/Keyboard/Reverse', self._bool(keyboard.get('reverse'))),
+            self.client.put_bool('Control/Input/Keyboard/RotateLeft', self._bool(keyboard.get('rotateLeft'))),
+            self.client.put_bool('Control/Input/Keyboard/RotateRight', self._bool(keyboard.get('rotateRight'))),
+            self.client.put_bool('Control/Input/Gamepad/Connected', self._bool(gamepad.get('connected'))),
+            self.client.put_string('Control/Input/Gamepad/Label', str(gamepad.get('label', '') or '')),
+            self.client.put_string('Control/Input/Gamepad/Mapping', str(gamepad.get('mapping', '') or '')),
+            self.client.put_number('Control/Input/Gamepad/Index', self._number(gamepad.get('index'), -1.0)),
+            self.client.put_number('Control/Input/Gamepad/Axis Count', float(len(axes))),
+            self.client.put_number('Control/Input/Gamepad/Button Count', float(len(buttons))),
+            self.client.put_string('Control/Input/Raw JSON', json.dumps(snapshot, separators=(',', ':'), sort_keys=True)),
+        ]
+
+        for axis_index, axis_value in enumerate(axes):
+            publications.append(self.client.put_number(f'Control/Input/Gamepad/Axes/{axis_index}', axis_value))
+
+        for stale_axis in range(len(axes), self._max_axis_count):
+            publications.append(self.client.put_number(f'Control/Input/Gamepad/Axes/{stale_axis}', 0.0))
+
+        for button_index, button in enumerate(buttons):
+            publications.append(self._publish_button_state(f'Control/Input/Gamepad/Buttons/{button_index}', button))
+
+        for stale_button in range(len(buttons), self._max_button_count):
+            publications.append(self._publish_button_state(f'Control/Input/Gamepad/Buttons/{stale_button}', {}))
+
+        for name, value in named_axes_raw.items():
+            safe_name = self._safe_key(name)
+            publications.append(self.client.put_number(f'Control/Input/Gamepad/Named Axes/{safe_name}', self._number(value, 0.0, (-1.0, 1.0))))
+
+        current_named_buttons: set[str] = set()
+        for name, raw_button in named_buttons_raw.items():
+            safe_name = self._safe_key(name)
+            current_named_buttons.add(safe_name)
+            button = raw_button if isinstance(raw_button, dict) else {}
+            publications.append(self._publish_button_state(f'Control/Input/Gamepad/Named Buttons/{safe_name}', button))
+
+        for stale_name in self._named_button_keys - current_named_buttons:
+            publications.append(self._publish_button_state(f'Control/Input/Gamepad/Named Buttons/{stale_name}', {}))
+
+        success = all(publications)
+        if not success:
+            return {'error': 'failed to publish control input snapshot'}, HTTPStatus.BAD_GATEWAY
+
+        self.sequence += 1
+        self.last_snapshot_at = iso_now()
+        self._max_axis_count = max(self._max_axis_count, len(axes))
+        self._max_button_count = max(self._max_button_count, len(buttons))
+        self._named_button_keys = current_named_buttons
+        return {'message': 'Control input snapshot published.'}, HTTPStatus.ACCEPTED
+
+
 class TelemetryBridge:
     def __init__(self, team: int):
         self.client = NTClient(team)
         self.control_mode = ControlModeManager(self.client)
         self.remote_driver = RemoteDriverManager(self.client)
+        self.control_input = ControlInputManager(self.client)
         self.pose_source_state: dict[str, dict[str, Any]] = {
             source: {
                 "available": False,
@@ -1122,6 +1247,7 @@ class TelemetryBridge:
             "topicCatalogEndpoint": "/api/topics",
             "topicWriteEndpoint": "/api/topics/write",
             "remoteDriverEndpoint": "/api/remote-driver",
+            "controlInputEndpoint": "/api/control-input/state",
             "connected": True,
             "robotLinkConnected": self.client.is_connected(),
             "teamNumber": connection_settings.get("teamNumber", self.client.team),
@@ -1561,6 +1687,21 @@ def build_handler(bridge: TelemetryBridge):
                     return
 
                 response, status = bridge.update_topic_value(key, value_kind, topic_payload.get("value"))
+                self._send_json(
+                    {
+                        **response,
+                        "bridgeStatus": bridge.bridge_status(),
+                    },
+                    status=status,
+                )
+                return
+
+            if self.path == "/api/control-input/state":
+                if payload.get("type") != "set_control_input_state":
+                    self._send_json({"error": "unsupported command"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+                response, status = bridge.control_input.publish_state(payload.get("payload", {}))
                 self._send_json(
                     {
                         **response,
