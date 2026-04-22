@@ -1,10 +1,16 @@
 import { useSpatialTelemetry } from '../../../hooks/useSpatialTelemetry'
 import { useSpatialViewModel } from '../../../hooks/useSpatialViewModel'
+import { useGuidedNavigation } from '../../../hooks/useGuidedNavigation'
 import { PlanarViewerCanvas } from '../../spatial/PlanarViewerCanvas'
 
 export function HomeWorkspaceSpatialViewWidget() {
   const snapshot = useSpatialTelemetry()
   const viewModel = useSpatialViewModel(snapshot)
+  const guidedNavigation = useGuidedNavigation({
+    goalPreview: viewModel.goalPreview,
+    selectedPose: viewModel.selectedPose,
+    lidarDiagnostics: viewModel.lidarDiagnostics,
+  })
 
   return (
     <div className="h-full min-h-0">
@@ -22,6 +28,7 @@ export function HomeWorkspaceSpatialViewWidget() {
         showOccupancyLayer={viewModel.showOccupancyLayer}
         occupancyDisplayMode={viewModel.occupancyDisplayMode}
         goalPreview={viewModel.goalPreview}
+        guidedNavigation={guidedNavigation}
         replaySelection={viewModel.replaySelection}
         viewport={viewModel.viewport}
         followRobot={viewModel.followRobot}

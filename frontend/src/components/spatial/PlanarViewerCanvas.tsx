@@ -27,6 +27,7 @@ import type {
   SpatialTrailPoint,
   SpatialViewportState,
 } from '../../hooks/useSpatialViewModel'
+import type { GuidedNavigationState } from '../../hooks/useGuidedNavigation'
 import {
   type PlanarSceneBufferedLidar,
   drawPlanarScene,
@@ -53,6 +54,7 @@ interface PlanarViewerCanvasProps {
   showOccupancyLayer: boolean
   occupancyDisplayMode: SpatialOccupancyDisplayMode
   goalPreview: SpatialGoalPreview
+  guidedNavigation?: GuidedNavigationState
   replaySelection: SpatialReplaySelection | null
   viewport: SpatialViewportState
   followRobot: boolean
@@ -383,6 +385,7 @@ export function PlanarViewerCanvas({
   showOccupancyLayer,
   occupancyDisplayMode,
   goalPreview,
+  guidedNavigation,
   replaySelection,
   viewport,
   followRobot,
@@ -430,6 +433,40 @@ export function PlanarViewerCanvas({
         : widgetVariant
           ? 'Clear Goal'
           : 'Clear Goal'
+  const navStatusLabel = guidedNavigation
+    ? guidedNavigation.active
+      ? 'Nav Running'
+      : guidedNavigation.canStart
+        ? 'Nav Ready'
+        : guidedNavigation.status === 'idle'
+          ? 'Nav Idle'
+          : `Nav ${guidedNavigation.status}`
+    : null
+  const navActionLabel = guidedNavigation
+    ? guidedNavigation.active
+      ? widgetVariant
+        ? 'Stop Nav'
+        : 'Stop Guided'
+      : guidedNavigation.canStart
+        ? widgetVariant
+          ? 'Start Nav'
+          : 'Start Guided'
+        : widgetVariant
+          ? 'Check Nav'
+          : 'Check Guided'
+    : null
+  const handleGuidedNavigationAction = () => {
+    if (!guidedNavigation) {
+      return
+    }
+
+    if (guidedNavigation.active) {
+      guidedNavigation.stopGuidedNavigation()
+      return
+    }
+
+    guidedNavigation.startGuidedNavigation()
+  }
   const sceneSnapshot = useMemo(
     () => ({
       trail,
@@ -740,6 +777,7 @@ export function PlanarViewerCanvas({
                 }
               />
               <OverlayInfoChip label={`Goal ${goalPreview.status}`} />
+              {navStatusLabel ? <OverlayInfoChip label={navStatusLabel} /> : null}
               <OverlayInfoChip
                 label={
                   showOccupancyLayer
@@ -771,6 +809,13 @@ export function PlanarViewerCanvas({
                         ? onArmGoalPreview
                         : onClearGoalPreview
                   }
+                />
+              ) : null}
+              {guidedNavigation && navActionLabel ? (
+                <OverlayButton
+                  compact
+                  label={navActionLabel}
+                  onClick={handleGuidedNavigationAction}
                 />
               ) : null}
             </div>
@@ -810,6 +855,12 @@ export function PlanarViewerCanvas({
                         ? onArmGoalPreview
                         : onClearGoalPreview
                   }
+                />
+              ) : null}
+              {guidedNavigation && navActionLabel ? (
+                <OverlayButton
+                  label={navActionLabel}
+                  onClick={handleGuidedNavigationAction}
                 />
               ) : null}
               <OverlayButton label="Clear Map" onClick={onClearObservedMap} />
@@ -917,6 +968,14 @@ export function PlanarViewerCanvas({
                     ? `${goalPreview.status} | ${goalPreview.path.length} pts`
                     : goalPreview.status}
               </div>
+              {guidedNavigation ? (
+                <div>
+                  Guided nav{' '}
+                  {guidedNavigation.canStart || guidedNavigation.active
+                    ? guidedNavigation.status
+                    : guidedNavigation.startBlockedReasons.join(', ') || guidedNavigation.status}
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-right text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">

@@ -5,6 +5,7 @@ import {
   poseSourceLabel,
   SPATIAL_POSE_OVERRIDE_OPTIONS,
 } from '../../lib/spatialTelemetry'
+import { useGuidedNavigation, type GuidedNavigationStatus } from '../../hooks/useGuidedNavigation'
 import { useSpatialTelemetry } from '../../hooks/useSpatialTelemetry'
 import { useSpatialViewModel } from '../../hooks/useSpatialViewModel'
 import type {
@@ -39,6 +40,14 @@ function goalPreviewTone(status: ReturnType<typeof useSpatialViewModel>['goalPre
   if (status === 'armed') return 'good'
   if (status === 'ready') return 'info'
   if (status === 'blocked' || status === 'unreachable') return 'warning'
+  if (status === 'unavailable') return 'critical'
+  return 'neutral'
+}
+
+function guidedNavigationTone(status: GuidedNavigationStatus) {
+  if (status === 'running' || status === 'completed') return 'good'
+  if (status === 'ready') return 'info'
+  if (status === 'aborted') return 'warning'
   if (status === 'unavailable') return 'critical'
   return 'neutral'
 }
@@ -84,7 +93,9 @@ function MetadataRow({
       <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
         {label}
       </span>
-      <span className="font-mono text-[0.82rem] text-[var(--text)]">{value}</span>
+      <span className="max-w-[68%] break-words text-right font-mono text-[0.82rem] text-[var(--text)]">
+        {value}
+      </span>
     </div>
   )
 }
@@ -227,6 +238,11 @@ export function SpatialWorkspace() {
   const replayControlsDisabled = replayBufferCount === 0
   const scanRegistration = viewModel.scanRegistration
   const goalPreview = viewModel.goalPreview
+  const guidedNavigation = useGuidedNavigation({
+    goalPreview,
+    selectedPose: viewModel.selectedPose,
+    lidarDiagnostics: viewModel.lidarDiagnostics,
+  })
   const observedMapPointCount = viewModel.observedMapScans.reduce(
     (total, scan) => total + scan.pointCount,
     0,
@@ -265,6 +281,7 @@ export function SpatialWorkspace() {
           showOccupancyLayer={viewModel.showOccupancyLayer}
           occupancyDisplayMode={viewModel.occupancyDisplayMode}
           goalPreview={viewModel.goalPreview}
+          guidedNavigation={guidedNavigation}
           replaySelection={viewModel.replaySelection}
           viewport={viewModel.viewport}
           followRobot={viewModel.followRobot}
@@ -597,9 +614,114 @@ export function SpatialWorkspace() {
           <div className="mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/72 px-3.5 py-3 text-[0.8rem] leading-6 text-[var(--text-muted)]">
             {goalPreview.message}{' '}
             <span className="font-semibold text-[var(--text)]">
-              This phase is preview-only:
+              Arming is still local:
             </span>{' '}
-            the route is computed on the desktop from the current occupancy layer, but no autonomous command is sent to the robot yet.
+            this card selects and validates the route; execution is handled only by the supervised Guided Navigation V0 controls below.
+          </div>
+        </DashboardCard>
+
+        <DashboardCard title="Guided Navigation V0" subtitle="supervised desktop-side waypoint follower" accent="warning">
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge
+              tone={guidedNavigationTone(guidedNavigation.status)}
+              label={guidedNavigation.status}
+            />
+            <StatusBadge
+              tone={guidedNavigation.remoteMode === 'teleop' ? 'good' : 'warning'}
+              label={guidedNavigation.remoteMode}
+            />
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            <MetadataRow
+              label="Lookahead"
+              value={
+                guidedNavigation.totalWaypoints > 0
+                  ? `${guidedNavigation.currentWaypointIndex}/${guidedNavigation.totalWaypoints}`
+                  : '--'
+              }
+            />
+            <MetadataRow
+              label="Waypoint Dist"
+              value={
+                guidedNavigation.distanceToWaypointMm === null
+                  ? '--'
+                  : formatMeters(guidedNavigation.distanceToWaypointMm / 1000, 3)
+              }
+            />
+            <MetadataRow
+              label="Goal Dist"
+              value={
+                guidedNavigation.distanceToGoalMm === null
+                  ? '--'
+                  : formatMeters(guidedNavigation.distanceToGoalMm / 1000, 3)
+              }
+            />
+            <MetadataRow
+              label="Path Progress"
+              value={`${(guidedNavigation.pathProgressRatio * 100).toFixed(1)}%`}
+            />
+            <MetadataRow
+              label="Progress Dist"
+              value={formatMeters(guidedNavigation.pathProgressMm / 1000, 3)}
+            />
+            <MetadataRow
+              label="Cross Track"
+              value={
+                guidedNavigation.crossTrackErrorMm === null
+                  ? '--'
+                  : formatMeters(guidedNavigation.crossTrackErrorMm / 1000, 3)
+              }
+            />
+            <MetadataRow label="Command X" value={guidedNavigation.commandX.toFixed(2)} />
+            <MetadataRow label="Command Y" value={guidedNavigation.commandY.toFixed(2)} />
+            <MetadataRow label="Command Z" value={guidedNavigation.commandZ.toFixed(2)} />
+            <MetadataRow label="LiDAR Gate" value={guidedNavigation.lidarSafetyState} />
+            <MetadataRow
+              label="LiDAR Dist"
+              value={formatDistanceMm(guidedNavigation.lidarSafetyDistanceMm)}
+            />
+            <MetadataRow
+              label="Speed Scale"
+              value={`${Math.round(guidedNavigation.lidarSafetyScale * 100)}%`}
+            />
+            <MetadataRow label="Goal Gate" value={guidedNavigation.goalStatus} />
+            <MetadataRow label="Path Points" value={String(guidedNavigation.goalPathPoints)} />
+            <MetadataRow label="Pose Gate" value={guidedNavigation.poseFreshness} />
+            <MetadataRow label="Input Gate" value={guidedNavigation.remoteInputSource} />
+            <MetadataRow
+              label="Start Gate"
+              value={
+                guidedNavigation.canStart
+                  ? 'ready'
+                  : guidedNavigation.startBlockedReasons.join(', ') || 'blocked'
+              }
+            />
+            <MetadataRow
+              label="Last Stop"
+              value={guidedNavigation.lastStopMessage ?? '--'}
+            />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <ControlChipButton
+              label={guidedNavigation.canStart ? 'Start Guided V0' : 'Check Start Gate'}
+              active={guidedNavigation.active}
+              disabled={guidedNavigation.active}
+              onClick={guidedNavigation.startGuidedNavigation}
+            />
+            <ControlChipButton
+              label="Stop Guided"
+              active={guidedNavigation.active}
+              disabled={!guidedNavigation.active}
+              onClick={guidedNavigation.stopGuidedNavigation}
+            />
+          </div>
+
+          <div className="mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/72 px-3.5 py-3 text-[0.8rem] leading-6 text-[var(--text-muted)]">
+            {guidedNavigation.message}{' '}
+            <span className="font-semibold text-[var(--text)]">Safety rule:</span>{' '}
+            this V0 only runs in teleop, replans from the latest desktop occupancy route, applies a short close-range recovery when odometry stalls near the target, and manual keyboard or joystick input interrupts it.
           </div>
         </DashboardCard>
 

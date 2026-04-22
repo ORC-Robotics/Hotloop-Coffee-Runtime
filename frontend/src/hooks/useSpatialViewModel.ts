@@ -39,11 +39,13 @@ const OBSERVED_MAP_HISTORY_LIMIT_DEFAULT = 48
 const OBSERVED_MAP_HISTORY_LIMIT_OPTIONS = [24, 48, 96] as const
 const OCCUPANCY_CELL_SIZE_DEFAULT_MM = 80
 const OCCUPANCY_CELL_SIZE_OPTIONS_MM = [60, 80, 120, 160] as const
-const GOAL_PREVIEW_TARGET_SNAP_RADIUS_CELLS = 2
-const GOAL_PREVIEW_START_SNAP_RADIUS_CELLS = 3
-const GOAL_PREVIEW_CLEARANCE_MM = 140
+const GOAL_PREVIEW_TARGET_SNAP_RADIUS_CELLS = 5
+const GOAL_PREVIEW_START_SNAP_RADIUS_CELLS = 5
+const GOAL_PREVIEW_CLEARANCE_MM = 240
+const GOAL_PREVIEW_PREFERRED_CLEARANCE_MM = 420
 const GOAL_PREVIEW_MAX_SEARCH_EXPANSIONS = 18_000
 const GOAL_PREVIEW_MIXED_CELL_COST = 1.8
+const GOAL_PREVIEW_WALL_PROXIMITY_COST = 2.4
 
 export interface SpatialTrailPoint {
   xMm: number
@@ -185,6 +187,7 @@ interface SpatialGoalPlannerGrid {
   cellSizeMm: number
   cellsByKey: Map<string, SpatialOccupancyCell>
   blockedKeys: Set<string>
+  proximityCostByKey: Map<string, number>
 }
 
 export interface SpatialViewModel {
@@ -495,20 +498,47 @@ function buildGoalPlannerGrid(layer: SpatialOccupancyLayer | null): SpatialGoalP
   })
 
   const blockedKeys = new Set<string>()
-  const inflationRadiusCells = Math.max(1, Math.floor(GOAL_PREVIEW_CLEARANCE_MM / layer.cellSizeMm))
+  const proximityCostByKey = new Map<string, number>()
+  const hardInflationRadiusCells = Math.max(
+    1,
+    Math.ceil(GOAL_PREVIEW_CLEARANCE_MM / layer.cellSizeMm),
+  )
+  const preferredInflationRadiusCells = Math.max(
+    hardInflationRadiusCells,
+    Math.ceil(GOAL_PREVIEW_PREFERRED_CLEARANCE_MM / layer.cellSizeMm),
+  )
 
   layer.cells.forEach((cell) => {
     if (cell.state !== 'occupied') {
       return
     }
 
-    for (let deltaX = -inflationRadiusCells; deltaX <= inflationRadiusCells; deltaX += 1) {
-      for (let deltaY = -inflationRadiusCells; deltaY <= inflationRadiusCells; deltaY += 1) {
-        if (Math.hypot(deltaX, deltaY) > inflationRadiusCells) {
+    for (
+      let deltaX = -preferredInflationRadiusCells;
+      deltaX <= preferredInflationRadiusCells;
+      deltaX += 1
+    ) {
+      for (
+        let deltaY = -preferredInflationRadiusCells;
+        deltaY <= preferredInflationRadiusCells;
+        deltaY += 1
+      ) {
+        const distanceCells = Math.hypot(deltaX, deltaY)
+        if (distanceCells > preferredInflationRadiusCells) {
           continue
         }
 
-        blockedKeys.add(occupancyCellKey(cell.gridX + deltaX, cell.gridY + deltaY))
+        const key = occupancyCellKey(cell.gridX + deltaX, cell.gridY + deltaY)
+        if (distanceCells <= hardInflationRadiusCells) {
+          blockedKeys.add(key)
+          continue
+        }
+
+        const clearanceRatio =
+          (preferredInflationRadiusCells - distanceCells) /
+          Math.max(1, preferredInflationRadiusCells - hardInflationRadiusCells)
+        const cost = clamp(clearanceRatio, 0, 1) * GOAL_PREVIEW_WALL_PROXIMITY_COST
+        proximityCostByKey.set(key, Math.max(proximityCostByKey.get(key) ?? 0, cost))
       }
     }
   })
@@ -518,6 +548,7 @@ function buildGoalPlannerGrid(layer: SpatialOccupancyLayer | null): SpatialGoalP
     cellSizeMm: layer.cellSizeMm,
     cellsByKey,
     blockedKeys,
+    proximityCostByKey,
   }
 }
 
@@ -861,8 +892,11 @@ function computeGoalPreview(
       }
 
       const stepDistanceMm = Math.hypot(offset.x, offset.y) * grid.cellSizeMm
+      const proximityCost = grid.proximityCostByKey.get(neighborKey) ?? 0
       const stepCost =
-        stepDistanceMm * (neighborCell.state === 'mixed' ? GOAL_PREVIEW_MIXED_CELL_COST : 1)
+        stepDistanceMm *
+        (neighborCell.state === 'mixed' ? GOAL_PREVIEW_MIXED_CELL_COST : 1) *
+        (1 + proximityCost)
       const tentativeCost = currentCost + stepCost
 
       if (tentativeCost >= (gScore.get(neighborKey) ?? Number.POSITIVE_INFINITY)) {

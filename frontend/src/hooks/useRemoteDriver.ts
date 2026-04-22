@@ -2,6 +2,7 @@ import {
   createContext,
   createElement,
   startTransition,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -23,8 +24,10 @@ import type {
 
 const STATUS_POLL_MS = 320
 const PREVIEW_POLL_MS = 80
+const GUIDED_COMMAND_TTL_MS = 260
 const DRIVER_SOURCE = 'Hotloop Desktop'
 const INPUT_DEADBAND = 0.08
+const GUIDED_INPUT_SOURCE = 'guided-nav'
 
 type DriverPreview = {
   gamepadConnected: boolean
@@ -37,6 +40,26 @@ type DriverPreview = {
 
 type CommandState = {
   tone: 'neutral' | 'warning' | 'good' | 'critical' | 'info'
+  message: string
+}
+
+export type GuidedDriverCommand = {
+  x: number
+  y: number
+  z: number
+  message?: string
+}
+
+type GuidedDriverCommandInternal = GuidedDriverCommand & {
+  expiresAtMs: number
+}
+
+type GuidedDriverCommandState = {
+  active: boolean
+  inputSource: string
+  x: number
+  y: number
+  z: number
   message: string
 }
 
@@ -123,6 +146,17 @@ function createDefaultMessage(): CommandState {
   return {
     tone: 'neutral',
     message: 'Select Teleoperado or Autonomo, then press Start.',
+  }
+}
+
+function createIdleGuidedCommandState(): GuidedDriverCommandState {
+  return {
+    active: false,
+    inputSource: GUIDED_INPUT_SOURCE,
+    x: 0,
+    y: 0,
+    z: 0,
+    message: 'Guided navigation idle.',
   }
 }
 
@@ -251,14 +285,55 @@ function useRemoteDriverController() {
   const keyboardStateRef = useRef<KeyboardState>(createEmptyKeyboardState())
   const preferredGamepadIndexRef = useRef<number | null>(null)
   const gyroAssistRef = useRef(gyroAssist)
+  const guidedCommandRef = useRef<GuidedDriverCommandInternal | null>(null)
   const wasTransmittingRef = useRef(false)
+  const [guidedCommandState, setGuidedCommandState] =
+    useState<GuidedDriverCommandState>(createIdleGuidedCommandState)
 
   useEffect(() => {
     gyroAssistRef.current = gyroAssist
   }, [gyroAssist])
 
+  const clearGuidedCommand = useCallback((message = 'Guided navigation idle.') => {
+    guidedCommandRef.current = null
+    startTransition(() => {
+      setGuidedCommandState({
+        ...createIdleGuidedCommandState(),
+        message,
+      })
+    })
+  }, [])
+
+  const setGuidedCommand = useCallback((command: GuidedDriverCommand | null) => {
+    if (!command) {
+      clearGuidedCommand()
+      return
+    }
+
+    const nextCommand: GuidedDriverCommandInternal = {
+      x: clampUnit(command.x),
+      y: clampUnit(command.y),
+      z: clampUnit(command.z),
+      message: command.message ?? 'Guided navigation command active.',
+      expiresAtMs: Date.now() + GUIDED_COMMAND_TTL_MS,
+    }
+
+    guidedCommandRef.current = nextCommand
+    startTransition(() => {
+      setGuidedCommandState({
+        active: true,
+        inputSource: GUIDED_INPUT_SOURCE,
+        x: nextCommand.x,
+        y: nextCommand.y,
+        z: nextCommand.z,
+        message: nextCommand.message,
+      })
+    })
+  }, [clearGuidedCommand])
+
   const flushZeroPacket = async (nextState?: CommandState) => {
     keyboardStateRef.current = createEmptyKeyboardState()
+    clearGuidedCommand()
     startTransition(() => {
       setPreview((current) => ({
         ...current,
@@ -441,10 +516,33 @@ function useRemoteDriverController() {
       const selectedGamepad = selectGamepad(preferredGamepadIndexRef.current)
       const gamepadState = readGamepadAxes(selectedGamepad)
       preferredGamepadIndexRef.current = gamepadState.index
-      const inputSample = combineInputs(
+      const operatorInputSample = combineInputs(
         gamepadState,
         readKeyboardAxes(keyboardStateRef.current),
       )
+      const guidedCommand = guidedCommandRef.current
+      const guidedCommandActive =
+        guidedCommand !== null && guidedCommand.expiresAtMs >= Date.now()
+      let inputSample = operatorInputSample
+
+      if (guidedCommandActive && operatorInputSample.inputSource === 'idle' && guidedCommand) {
+        inputSample = {
+          gamepadConnected: gamepadState.connected,
+          gamepadLabel: gamepadState.label,
+          inputSource: GUIDED_INPUT_SOURCE,
+          x: guidedCommand.x,
+          y: guidedCommand.y,
+          z: guidedCommand.z,
+        }
+      } else if (guidedCommandActive && operatorInputSample.inputSource !== 'idle') {
+        clearGuidedCommand('Guided navigation interrupted by manual operator input.')
+        setCommandState({
+          tone: 'warning',
+          message: 'Guided navigation interrupted by manual operator input.',
+        })
+      } else if (guidedCommand !== null && !guidedCommandActive) {
+        clearGuidedCommand('Guided navigation command expired; robot heartbeat returned to idle.')
+      }
 
       startTransition(() => {
         setPreview(inputSample)
@@ -567,6 +665,7 @@ function useRemoteDriverController() {
 
       if (action === 'disable' || action === 'reset' || action === 'estop') {
         wasTransmittingRef.current = false
+        clearGuidedCommand()
       }
 
       setCommandState({
@@ -587,6 +686,9 @@ function useRemoteDriverController() {
     gyroAssist,
     setGyroAssist,
     preview,
+    guidedCommandState,
+    setGuidedCommand,
+    clearGuidedCommand,
     commandState,
     dispatchAction,
     teleopStreaming: windowActive && remoteDriver.mode === 'teleop',
