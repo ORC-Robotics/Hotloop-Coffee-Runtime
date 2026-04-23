@@ -93,6 +93,20 @@ function clampSize(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.round(value)))
 }
 
+function normalizeHeadingDegrees(value: number) {
+  let normalized = value
+
+  while (normalized > 180) {
+    normalized -= 360
+  }
+
+  while (normalized < -180) {
+    normalized += 360
+  }
+
+  return normalized
+}
+
 function ToolbarButton({
   children,
   onClick,
@@ -358,6 +372,26 @@ function WidgetConfigPanel({
     onUpdateWidget(widget.id, { config: { [field]: parsed } })
   }
 
+  const commitSpatialTargetYaw = (rawValue: string) => {
+    if (!isHomeWorkspacePresetWidget(widget) || widget.presetId !== 'spatial-view') {
+      return
+    }
+
+    if (rawValue.trim() === '') {
+      onUpdateWidget(widget.id, { presetConfig: { spatialTargetYawDeg: null } })
+      return
+    }
+
+    const parsed = Number(rawValue)
+    if (!Number.isFinite(parsed)) {
+      return
+    }
+
+    onUpdateWidget(widget.id, {
+      presetConfig: { spatialTargetYawDeg: normalizeHeadingDegrees(parsed) },
+    })
+  }
+
   return (
     <div className="grid gap-3 rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/82 px-3 py-3">
       <div className="grid gap-3 md:grid-cols-2">
@@ -438,6 +472,46 @@ function WidgetConfigPanel({
           {widget.presetId === 'camera-stream' && resolvedCameraFeeds.length === 0 ? (
             <div className="rounded-[16px] border border-dashed border-[var(--border)] bg-[var(--surface)]/76 px-3 py-3 text-[0.76rem] leading-6 text-[var(--text-muted)]">
               No live camera feed is available right now. In simulation, enable the camera button. On hardware, keep a manual feed in Settings or wait for discovery.
+            </div>
+          ) : null}
+
+          {widget.presetId === 'spatial-view' ? (
+            <div className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)]/72 px-3 py-3">
+              <label className="grid gap-2">
+                <FieldLabel>Target Yaw</FieldLabel>
+                <input
+                  key={widget.config.spatialTargetYawDeg ?? 'auto'}
+                  type="number"
+                  step={5}
+                  defaultValue={widget.config.spatialTargetYawDeg ?? ''}
+                  placeholder="Auto / path heading"
+                  onBlur={(event) => commitSpatialTargetYaw(event.target.value)}
+                  className="w-full rounded-[14px] border border-[var(--border)] bg-[var(--surface)]/84 px-3 py-2 text-[0.8rem] text-[var(--text)] outline-none transition-colors focus:border-[var(--primary)]"
+                />
+              </label>
+
+              <div className="flex flex-wrap gap-2">
+                <ToolbarButton
+                  active={widget.config.spatialTargetYawDeg === null}
+                  onClick={() => onUpdateWidget(widget.id, { presetConfig: { spatialTargetYawDeg: null } })}
+                >
+                  Auto
+                </ToolbarButton>
+                {([0, 90, 180, -90] as const).map((targetYawDeg) => (
+                  <ToolbarButton
+                    key={targetYawDeg}
+                    active={widget.config.spatialTargetYawDeg === targetYawDeg}
+                    onClick={() => onUpdateWidget(widget.id, { presetConfig: { spatialTargetYawDeg: targetYawDeg } })}
+                  >
+                    {`${targetYawDeg} deg`}
+                  </ToolbarButton>
+                ))}
+              </div>
+
+              <div className="text-[0.76rem] leading-6 text-[var(--text-muted)]">
+                Auto keeps following the route heading. Setting a value here locks the
+                final arrival heading for the Spatial preset and the preview target marker.
+              </div>
             </div>
           ) : null}
         </div>
@@ -1034,6 +1108,7 @@ export function HomeWorkspaceCanvas({
                         derived={derived}
                         alerts={alerts}
                         batteryHistory={batteryHistory}
+                        onUpdateWidget={onUpdateWidget}
                       />
                     </div>
                   </div>

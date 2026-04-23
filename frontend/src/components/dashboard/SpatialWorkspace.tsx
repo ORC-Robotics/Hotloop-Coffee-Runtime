@@ -287,6 +287,7 @@ export function SpatialWorkspace() {
           followRobot={viewModel.followRobot}
           onPanViewport={viewModel.panViewport}
           onZoomViewport={viewModel.zoomViewport}
+          onRotateViewport={viewModel.rotateViewport}
           onToggleFollowRobot={viewModel.toggleFollowRobot}
           onCenterRobot={viewModel.centerOnRobot}
           onResetView={viewModel.resetView}
@@ -671,6 +672,22 @@ export function SpatialWorkspace() {
                 guidedNavigation.crossTrackErrorMm === null
                   ? '--'
                   : formatMeters(guidedNavigation.crossTrackErrorMm / 1000, 3)
+              }
+            />
+            <MetadataRow
+              label="Target Yaw"
+              value={
+                guidedNavigation.targetYawDeg === null
+                  ? '--'
+                  : formatDegrees(guidedNavigation.targetYawDeg, 1)
+              }
+            />
+            <MetadataRow
+              label="Yaw Error"
+              value={
+                guidedNavigation.yawErrorDeg === null
+                  ? '--'
+                  : formatDegrees(guidedNavigation.yawErrorDeg, 1)
               }
             />
             <MetadataRow label="Command X" value={guidedNavigation.commandX.toFixed(2)} />

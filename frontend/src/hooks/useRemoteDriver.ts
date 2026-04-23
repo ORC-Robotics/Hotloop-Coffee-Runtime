@@ -54,6 +54,7 @@ export type GuidedDriverCommand = {
 }
 
 type GuidedDriverCommandInternal = GuidedDriverCommand & {
+  message: string
   expiresAtMs: number
 }
 

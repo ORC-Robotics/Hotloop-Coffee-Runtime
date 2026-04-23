@@ -33,6 +33,7 @@ export interface PlanarSceneViewport {
   centerXMm: number
   centerYMm: number
   zoomPxPerMm: number
+  rotationDeg: number
 }
 
 export interface PlanarSceneTrailPoint {
@@ -122,6 +123,7 @@ export interface PlanarSceneGoalPreview {
   requestedYMm: number
   targetXMm: number | null
   targetYMm: number | null
+  targetYawDeg: number | null
   path: PlanarSceneGoalPreviewPoint[]
 }
 
@@ -154,9 +156,17 @@ function worldToScreen(
   widthPx: number,
   heightPx: number,
 ) {
+  const deltaXMm = xMm - viewport.centerXMm
+  const deltaYMm = yMm - viewport.centerYMm
+  const rotationRad = (viewport.rotationDeg * Math.PI) / 180
+  const cosRotation = Math.cos(rotationRad)
+  const sinRotation = Math.sin(rotationRad)
+  const viewXMm = deltaXMm * cosRotation + deltaYMm * sinRotation
+  const viewYMm = -deltaXMm * sinRotation + deltaYMm * cosRotation
+
   return {
-    x: widthPx / 2 + (xMm - viewport.centerXMm) * viewport.zoomPxPerMm,
-    y: heightPx / 2 - (yMm - viewport.centerYMm) * viewport.zoomPxPerMm,
+    x: widthPx / 2 + viewXMm * viewport.zoomPxPerMm,
+    y: heightPx / 2 - viewYMm * viewport.zoomPxPerMm,
   }
 }
 
@@ -187,10 +197,11 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
   const { widthPx, heightPx, viewport, palette } = scene
   const majorStepMm = chooseMajorGridStepMm(viewport.zoomPxPerMm)
   const minorStepMm = majorStepMm / 5
-  const leftMm = viewport.centerXMm - widthPx / (2 * viewport.zoomPxPerMm)
-  const rightMm = viewport.centerXMm + widthPx / (2 * viewport.zoomPxPerMm)
-  const bottomMm = viewport.centerYMm - heightPx / (2 * viewport.zoomPxPerMm)
-  const topMm = viewport.centerYMm + heightPx / (2 * viewport.zoomPxPerMm)
+  const visibleRadiusMm = Math.hypot(widthPx, heightPx) / (2 * viewport.zoomPxPerMm)
+  const leftMm = viewport.centerXMm - visibleRadiusMm
+  const rightMm = viewport.centerXMm + visibleRadiusMm
+  const bottomMm = viewport.centerYMm - visibleRadiusMm
+  const topMm = viewport.centerYMm + visibleRadiusMm
 
   ctx.save()
   ctx.lineWidth = 1
@@ -203,9 +214,10 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
     xMm <= rightMm;
     xMm += minorStepMm
   ) {
-    const screen = worldToScreen(xMm, viewport.centerYMm, viewport, widthPx, heightPx)
-    ctx.moveTo(screen.x, 0)
-    ctx.lineTo(screen.x, heightPx)
+    const start = worldToScreen(xMm, bottomMm, viewport, widthPx, heightPx)
+    const end = worldToScreen(xMm, topMm, viewport, widthPx, heightPx)
+    ctx.moveTo(start.x, start.y)
+    ctx.lineTo(end.x, end.y)
   }
 
   for (
@@ -213,9 +225,10 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
     yMm <= topMm;
     yMm += minorStepMm
   ) {
-    const screen = worldToScreen(viewport.centerXMm, yMm, viewport, widthPx, heightPx)
-    ctx.moveTo(0, screen.y)
-    ctx.lineTo(widthPx, screen.y)
+    const start = worldToScreen(leftMm, yMm, viewport, widthPx, heightPx)
+    const end = worldToScreen(rightMm, yMm, viewport, widthPx, heightPx)
+    ctx.moveTo(start.x, start.y)
+    ctx.lineTo(end.x, end.y)
   }
 
   ctx.stroke()
@@ -228,9 +241,10 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
     xMm <= rightMm;
     xMm += majorStepMm
   ) {
-    const screen = worldToScreen(xMm, viewport.centerYMm, viewport, widthPx, heightPx)
-    ctx.moveTo(screen.x, 0)
-    ctx.lineTo(screen.x, heightPx)
+    const start = worldToScreen(xMm, bottomMm, viewport, widthPx, heightPx)
+    const end = worldToScreen(xMm, topMm, viewport, widthPx, heightPx)
+    ctx.moveTo(start.x, start.y)
+    ctx.lineTo(end.x, end.y)
   }
 
   for (
@@ -238,9 +252,10 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
     yMm <= topMm;
     yMm += majorStepMm
   ) {
-    const screen = worldToScreen(viewport.centerXMm, yMm, viewport, widthPx, heightPx)
-    ctx.moveTo(0, screen.y)
-    ctx.lineTo(widthPx, screen.y)
+    const start = worldToScreen(leftMm, yMm, viewport, widthPx, heightPx)
+    const end = worldToScreen(rightMm, yMm, viewport, widthPx, heightPx)
+    ctx.moveTo(start.x, start.y)
+    ctx.lineTo(end.x, end.y)
   }
 
   ctx.stroke()
@@ -250,6 +265,11 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
 function drawAxes(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
   const { widthPx, heightPx, viewport, palette } = scene
   const originScreen = worldToScreen(0, 0, viewport, widthPx, heightPx)
+  const axisExtentMm = Math.hypot(widthPx, heightPx) / (2 * viewport.zoomPxPerMm)
+  const xAxisStart = worldToScreen(-axisExtentMm, 0, viewport, widthPx, heightPx)
+  const xAxisEnd = worldToScreen(axisExtentMm, 0, viewport, widthPx, heightPx)
+  const yAxisStart = worldToScreen(0, -axisExtentMm, viewport, widthPx, heightPx)
+  const yAxisEnd = worldToScreen(0, axisExtentMm, viewport, widthPx, heightPx)
 
   ctx.save()
   ctx.lineWidth = 1.35
@@ -257,14 +277,14 @@ function drawAxes(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
 
   ctx.strokeStyle = palette.axisX
   ctx.beginPath()
-  ctx.moveTo(0, originScreen.y)
-  ctx.lineTo(widthPx, originScreen.y)
+  ctx.moveTo(xAxisStart.x, xAxisStart.y)
+  ctx.lineTo(xAxisEnd.x, xAxisEnd.y)
   ctx.stroke()
 
   ctx.strokeStyle = palette.axisY
   ctx.beginPath()
-  ctx.moveTo(originScreen.x, 0)
-  ctx.lineTo(originScreen.x, heightPx)
+  ctx.moveTo(yAxisStart.x, yAxisStart.y)
+  ctx.lineTo(yAxisEnd.x, yAxisEnd.y)
   ctx.stroke()
 
   ctx.fillStyle = palette.axisOrigin
@@ -355,20 +375,13 @@ function drawOccupancyLayer(ctx: CanvasRenderingContext2D, scene: PlanarSceneMod
     return
   }
 
-  const halfCellPx = cellSizePx / 2
+  const halfCellMm = scene.occupancy.cellSizeMm / 2
   const shouldStroke = cellSizePx >= 14
 
   ctx.save()
   ctx.lineWidth = 1
 
   scene.occupancy.cells.forEach((cell) => {
-    const screen = worldToScreen(
-      cell.centerXMm,
-      cell.centerYMm,
-      scene.viewport,
-      scene.widthPx,
-      scene.heightPx,
-    )
     const alpha =
       cell.state === 'occupied'
         ? 0.18 + cell.confidence * 0.38
@@ -383,12 +396,48 @@ function drawOccupancyLayer(ctx: CanvasRenderingContext2D, scene: PlanarSceneMod
         : cell.state === 'free'
           ? scene.palette.occupancyFree
           : scene.palette.occupancyMixed
-    ctx.fillRect(screen.x - halfCellPx, screen.y - halfCellPx, cellSizePx, cellSizePx)
+
+    const topLeft = worldToScreen(
+      cell.centerXMm - halfCellMm,
+      cell.centerYMm + halfCellMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const topRight = worldToScreen(
+      cell.centerXMm + halfCellMm,
+      cell.centerYMm + halfCellMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const bottomRight = worldToScreen(
+      cell.centerXMm + halfCellMm,
+      cell.centerYMm - halfCellMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const bottomLeft = worldToScreen(
+      cell.centerXMm - halfCellMm,
+      cell.centerYMm - halfCellMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+
+    ctx.beginPath()
+    ctx.moveTo(topLeft.x, topLeft.y)
+    ctx.lineTo(topRight.x, topRight.y)
+    ctx.lineTo(bottomRight.x, bottomRight.y)
+    ctx.lineTo(bottomLeft.x, bottomLeft.y)
+    ctx.closePath()
+    ctx.fill()
 
     if (shouldStroke) {
       ctx.globalAlpha = Math.min(0.5, alpha + 0.08)
       ctx.strokeStyle = scene.palette.gridMinor
-      ctx.strokeRect(screen.x - halfCellPx, screen.y - halfCellPx, cellSizePx, cellSizePx)
+      ctx.stroke()
     }
   })
 
@@ -482,6 +531,48 @@ function drawGoalPreview(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel)
   ctx.moveTo(targetScreen.x, targetScreen.y - 16)
   ctx.lineTo(targetScreen.x, targetScreen.y + 16)
   ctx.stroke()
+
+  if (
+    preview.targetXMm !== null &&
+    preview.targetYMm !== null &&
+    preview.targetYawDeg !== null
+  ) {
+    const headingRad = (preview.targetYawDeg * Math.PI) / 180
+    const headingLengthMm = 180
+    const arrowLengthMm = 70
+    const tip = worldToScreen(
+      preview.targetXMm + Math.sin(headingRad) * headingLengthMm,
+      preview.targetYMm + Math.cos(headingRad) * headingLengthMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const left = worldToScreen(
+      preview.targetXMm + Math.sin(headingRad) * headingLengthMm - Math.sin(headingRad - 0.48) * arrowLengthMm,
+      preview.targetYMm + Math.cos(headingRad) * headingLengthMm - Math.cos(headingRad - 0.48) * arrowLengthMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+    const right = worldToScreen(
+      preview.targetXMm + Math.sin(headingRad) * headingLengthMm - Math.sin(headingRad + 0.48) * arrowLengthMm,
+      preview.targetYMm + Math.cos(headingRad) * headingLengthMm - Math.cos(headingRad + 0.48) * arrowLengthMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2.2
+    ctx.globalAlpha = 0.9
+    ctx.beginPath()
+    ctx.moveTo(targetScreen.x, targetScreen.y)
+    ctx.lineTo(tip.x, tip.y)
+    ctx.lineTo(left.x, left.y)
+    ctx.moveTo(tip.x, tip.y)
+    ctx.lineTo(right.x, right.y)
+    ctx.stroke()
+  }
 
   if (preview.targetXMm !== null && preview.targetYMm !== null) {
     ctx.globalAlpha = 0.72

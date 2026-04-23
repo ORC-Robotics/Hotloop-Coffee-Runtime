@@ -27,6 +27,7 @@ const DEFAULT_VIEWPORT = {
   centerXMm: 0,
   centerYMm: 0,
   zoomPxPerMm: 0.12,
+  rotationDeg: 0,
 }
 
 const MIN_ZOOM_PX_PER_MM = 0.035
@@ -46,6 +47,9 @@ const GOAL_PREVIEW_PREFERRED_CLEARANCE_MM = 420
 const GOAL_PREVIEW_MAX_SEARCH_EXPANSIONS = 18_000
 const GOAL_PREVIEW_MIXED_CELL_COST = 1.8
 const GOAL_PREVIEW_WALL_PROXIMITY_COST = 2.4
+const GOAL_PREVIEW_SMOOTHING_SAMPLE_STEP_MM = 24
+const GOAL_PREVIEW_SMOOTHING_MAX_PROXIMITY_COST = 0.45
+const GOAL_PREVIEW_SMOOTHING_MAX_TRIM_MM = 54
 
 export interface SpatialTrailPoint {
   xMm: number
@@ -60,6 +64,7 @@ export interface SpatialViewportState {
   centerXMm: number
   centerYMm: number
   zoomPxPerMm: number
+  rotationDeg: number
 }
 
 export interface SpatialViewportSize {
@@ -169,6 +174,7 @@ export interface SpatialGoalPreview {
   frame: string
   requestedXMm: number | null
   requestedYMm: number | null
+  targetYawDeg: number | null
   target: SpatialGoalPreviewTarget | null
   path: SpatialPathPreviewPoint[]
   waypointCount: number
@@ -180,6 +186,10 @@ export interface SpatialGoalPreview {
 interface SpatialGoalRequest {
   xMm: number
   yMm: number
+}
+
+interface UseSpatialViewModelOptions {
+  goalTargetYawDeg?: number | null
 }
 
 interface SpatialGoalPlannerGrid {
@@ -242,6 +252,8 @@ export interface SpatialViewModel {
   returnToLive: () => void
   panViewport: (deltaXPx: number, deltaYPx: number) => void
   zoomViewport: (factor: number, anchor: SpatialAnchorPoint, viewportSize: SpatialViewportSize) => void
+  rotateViewport: (deltaDeg: number) => void
+  resetViewportRotation: () => void
 }
 
 function normalizeAngleDelta(value: number) {
@@ -256,6 +268,31 @@ function normalizeAngleDelta(value: number) {
   }
 
   return next
+}
+
+function normalizeViewportRotation(value: number) {
+  let next = value % 360
+
+  if (next < 0) {
+    next += 360
+  }
+
+  return next
+}
+
+function rotateViewVectorToWorld(
+  xMm: number,
+  yMm: number,
+  rotationDeg: number,
+) {
+  const rotationRad = (rotationDeg * Math.PI) / 180
+  const cosRotation = Math.cos(rotationRad)
+  const sinRotation = Math.sin(rotationRad)
+
+  return {
+    xMm: xMm * cosRotation - yMm * sinRotation,
+    yMm: xMm * sinRotation + yMm * cosRotation,
+  }
 }
 
 function toTrailPoint(pose: PlanarPoseData): SpatialTrailPoint {
@@ -640,6 +677,141 @@ function simplifyPlannerCellPath(path: SpatialOccupancyCell[]) {
   return simplified
 }
 
+function optimizePlannerCellPath(
+  path: SpatialOccupancyCell[],
+  _grid: SpatialGoalPlannerGrid,
+) {
+  // Keep V1 conservative: we preserve the A* cell corridor and only allow
+  // local corner smoothing when the buffered segment stays inside safe space.
+  return path
+}
+
+function plannerWorldSegmentSafe(
+  grid: SpatialGoalPlannerGrid,
+  start: SpatialPathPreviewPoint,
+  end: SpatialPathPreviewPoint,
+  maxProximityCost = GOAL_PREVIEW_SMOOTHING_MAX_PROXIMITY_COST,
+) {
+  const segmentLengthMm = Math.hypot(end.xMm - start.xMm, end.yMm - start.yMm)
+  const steps = Math.max(
+    1,
+    Math.ceil(segmentLengthMm / Math.max(1, GOAL_PREVIEW_SMOOTHING_SAMPLE_STEP_MM)),
+  )
+  const visitedKeys = new Set<string>()
+
+  for (let stepIndex = 0; stepIndex <= steps; stepIndex += 1) {
+    const ratio = stepIndex / steps
+    const sampleXMm = start.xMm + (end.xMm - start.xMm) * ratio
+    const sampleYMm = start.yMm + (end.yMm - start.yMm) * ratio
+    const sampleIndices = occupancyCellIndices(sampleXMm, sampleYMm, grid.cellSizeMm)
+    const key = occupancyCellKey(sampleIndices.gridX, sampleIndices.gridY)
+
+    if (visitedKeys.has(key)) {
+      continue
+    }
+
+    visitedKeys.add(key)
+    if (!plannerCellTraversable(grid, key)) {
+      return false
+    }
+
+    if ((grid.proximityCostByKey.get(key) ?? 0) > maxProximityCost) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function appendUniquePathPoint(
+  points: SpatialPathPreviewPoint[],
+  point: SpatialPathPreviewPoint,
+  minimumDistanceMm = 6,
+) {
+  const previous = points[points.length - 1]
+  if (
+    previous &&
+    Math.hypot(previous.xMm - point.xMm, previous.yMm - point.yMm) < minimumDistanceMm
+  ) {
+    return
+  }
+
+  points.push(point)
+}
+
+function smoothPathPreviewPoints(
+  points: SpatialPathPreviewPoint[],
+  cellSizeMm: number,
+  grid: SpatialGoalPlannerGrid,
+) {
+  if (points.length <= 2) {
+    return points
+  }
+
+  const smoothed: SpatialPathPreviewPoint[] = [points[0]]
+  const trimBaseMm = Math.max(24, Math.min(cellSizeMm * 0.3, GOAL_PREVIEW_SMOOTHING_MAX_TRIM_MM))
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1]
+    const current = points[index]
+    const next = points[index + 1]
+    const previousDeltaXMm = current.xMm - previous.xMm
+    const previousDeltaYMm = current.yMm - previous.yMm
+    const nextDeltaXMm = next.xMm - current.xMm
+    const nextDeltaYMm = next.yMm - current.yMm
+    const previousLengthMm = Math.hypot(previousDeltaXMm, previousDeltaYMm)
+    const nextLengthMm = Math.hypot(nextDeltaXMm, nextDeltaYMm)
+
+    if (previousLengthMm <= 1 || nextLengthMm <= 1) {
+      appendUniquePathPoint(smoothed, current)
+      continue
+    }
+
+    const previousDirectionX = previousDeltaXMm / previousLengthMm
+    const previousDirectionY = previousDeltaYMm / previousLengthMm
+    const nextDirectionX = nextDeltaXMm / nextLengthMm
+    const nextDirectionY = nextDeltaYMm / nextLengthMm
+    const directionAlignment =
+      previousDirectionX * nextDirectionX + previousDirectionY * nextDirectionY
+
+    if (directionAlignment >= 0.985) {
+      appendUniquePathPoint(smoothed, current)
+      continue
+    }
+
+    const trimMm = Math.min(
+      trimBaseMm,
+      previousLengthMm * 0.35,
+      nextLengthMm * 0.35,
+    )
+
+    if (trimMm < 12) {
+      appendUniquePathPoint(smoothed, current)
+      continue
+    }
+
+    const entryPoint = {
+      xMm: current.xMm - previousDirectionX * trimMm,
+      yMm: current.yMm - previousDirectionY * trimMm,
+    }
+    const exitPoint = {
+      xMm: current.xMm + nextDirectionX * trimMm,
+      yMm: current.yMm + nextDirectionY * trimMm,
+    }
+
+    if (!plannerWorldSegmentSafe(grid, entryPoint, exitPoint)) {
+      appendUniquePathPoint(smoothed, current)
+      continue
+    }
+
+    appendUniquePathPoint(smoothed, entryPoint)
+    appendUniquePathPoint(smoothed, exitPoint)
+  }
+
+  appendUniquePathPoint(smoothed, points[points.length - 1])
+  return smoothed
+}
+
 function computePathLengthMm(points: SpatialPathPreviewPoint[]) {
   if (points.length < 2) {
     return 0
@@ -660,6 +832,7 @@ function buildGoalPreviewUnavailable(
   status: Extract<SpatialGoalPreviewStatus, 'idle' | 'blocked' | 'unreachable' | 'unavailable'>,
   message: string,
   request: SpatialGoalRequest | null,
+  targetYawDeg: number | null,
   frame = 'none',
 ): SpatialGoalPreview {
   return {
@@ -668,6 +841,7 @@ function buildGoalPreviewUnavailable(
     frame,
     requestedXMm: request?.xMm ?? null,
     requestedYMm: request?.yMm ?? null,
+    targetYawDeg,
     target: null,
     path: [],
     waypointCount: 0,
@@ -682,12 +856,14 @@ function computeGoalPreview(
   armed: boolean,
   pose: PlanarPoseData,
   grid: SpatialGoalPlannerGrid | null,
+  targetYawDeg: number | null,
 ): SpatialGoalPreview {
   if (!request) {
     return buildGoalPreviewUnavailable(
       'idle',
       'Click a visited free area to preview a desktop-side route through the current occupancy layer.',
       null,
+      targetYawDeg,
       grid?.frame ?? pose.frame,
     )
   }
@@ -697,6 +873,7 @@ function computeGoalPreview(
       'unavailable',
       'Need a valid planar pose before the goal preview can resolve a start cell.',
       request,
+      targetYawDeg,
     )
   }
 
@@ -705,6 +882,7 @@ function computeGoalPreview(
       'unavailable',
       'Need occupancy coverage before the goal preview can evaluate a reachable target.',
       request,
+      targetYawDeg,
       pose.frame,
     )
   }
@@ -714,6 +892,7 @@ function computeGoalPreview(
       'unavailable',
       'The selected pose frame no longer matches the active occupancy frame.',
       request,
+      targetYawDeg,
       grid.frame,
     )
   }
@@ -730,6 +909,7 @@ function computeGoalPreview(
       'unavailable',
       'The robot is not currently sitting inside a traversable free-space island in the desktop occupancy layer.',
       request,
+      targetYawDeg,
       grid.frame,
     )
   }
@@ -746,6 +926,7 @@ function computeGoalPreview(
       'blocked',
       'The clicked point is outside the mapped free space or too close to an occupied safety buffer.',
       request,
+      targetYawDeg,
       grid.frame,
     )
   }
@@ -794,14 +975,28 @@ function computeGoalPreview(
       }
 
       const simplifiedPath = simplifyPlannerCellPath(pathCells)
-      const path: SpatialPathPreviewPoint[] = [{ xMm: pose.xMm, yMm: pose.yMm }]
+      const optimizedPath = optimizePlannerCellPath(simplifiedPath, grid)
+      const rawPath: SpatialPathPreviewPoint[] = [{ xMm: pose.xMm, yMm: pose.yMm }]
 
-      simplifiedPath.slice(1).forEach((cell) => {
-        path.push({
+      optimizedPath.slice(1).forEach((cell) => {
+        rawPath.push({
           xMm: cell.centerXMm,
           yMm: cell.centerYMm,
         })
       })
+
+      const lastRawPathPoint = rawPath[rawPath.length - 1]
+      if (
+        !lastRawPathPoint ||
+        Math.hypot(lastRawPathPoint.xMm - targetCell.centerXMm, lastRawPathPoint.yMm - targetCell.centerYMm) > 1
+      ) {
+        rawPath.push({
+          xMm: targetCell.centerXMm,
+          yMm: targetCell.centerYMm,
+        })
+      }
+
+      const path = smoothPathPreviewPoints(rawPath, grid.cellSizeMm, grid)
 
       const lastPathPoint = path[path.length - 1]
       if (
@@ -831,15 +1026,17 @@ function computeGoalPreview(
 
       return {
         status: armed ? 'armed' : 'ready',
-        message:
+        message: `${
           armed
             ? 'Goal preview armed locally. No robot command is sent yet; this is ready for the guided-navigation execution phase.'
             : target.snapDistanceMm > grid.cellSizeMm * 0.4
               ? `Preview path computed. The click was snapped ${Math.round(target.snapDistanceMm)} mm to the nearest traversable cell. Press N to arm it.`
-              : 'Preview path computed. Press N to arm this target locally or Esc to clear it.',
+              : 'Preview path computed. Press N to arm this target locally or Esc to clear it.'
+        }${targetYawDeg === null ? '' : ` Final heading locked to ${Math.round(targetYawDeg)} deg.`}`,
         frame: grid.frame,
         requestedXMm: request.xMm,
         requestedYMm: request.yMm,
+        targetYawDeg,
         target,
         path,
         waypointCount: Math.max(0, path.length - 1),
@@ -914,6 +1111,7 @@ function computeGoalPreview(
     'unreachable',
     'A clean route through the currently mapped free-space cells could not be found for this target yet.',
     request,
+    targetYawDeg,
     grid.frame,
   )
 }
@@ -952,7 +1150,10 @@ function observedMapScanFromSelection(
   }
 }
 
-export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel {
+export function useSpatialViewModel(
+  snapshot: SpatialSnapshot,
+  options: UseSpatialViewModelOptions = {},
+): SpatialViewModel {
   const [sourceOverride, setSourceOverride] = useState<PoseSourceOverride>('auto')
   const [viewport, setViewport] = useState<SpatialViewportState>(DEFAULT_VIEWPORT)
   const [followRobot, setFollowRobotState] = useState(false)
@@ -1032,6 +1233,10 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
   }, [lidarHistory, nowMs, replayKey])
   const replayMode: SpatialReplayMode = replaySelection ? 'history' : 'live'
   const activePose = replaySelection ? replayPoseFromScan(replaySelection.scan) : selectedPose.pose
+  const goalTargetYawDeg =
+    typeof options.goalTargetYawDeg === 'number' && Number.isFinite(options.goalTargetYawDeg)
+      ? normalizeAngleDelta(options.goalTargetYawDeg)
+      : null
   const displayTrail = useMemo(() => {
     if (!replaySelection) {
       return trail
@@ -1124,8 +1329,8 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
     [currentRegistrationSample, referenceRegistrationSample],
   )
   const goalPreview = useMemo(
-    () => computeGoalPreview(goalRequest, goalPreviewArmed, activePose, goalPlannerGrid),
-    [activePose, goalPlannerGrid, goalPreviewArmed, goalRequest],
+    () => computeGoalPreview(goalRequest, goalPreviewArmed, activePose, goalPlannerGrid, goalTargetYawDeg),
+    [activePose, goalPlannerGrid, goalPreviewArmed, goalRequest, goalTargetYawDeg],
   )
 
   useEffect(() => {
@@ -1461,6 +1666,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
       centerXMm: activePose.available ? activePose.xMm : 0,
       centerYMm: activePose.available ? activePose.yMm : 0,
       zoomPxPerMm: DEFAULT_VIEWPORT.zoomPxPerMm,
+      rotationDeg: DEFAULT_VIEWPORT.rotationDeg,
     })
   }
 
@@ -1570,11 +1776,23 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
 
   const panViewport = (deltaXPx: number, deltaYPx: number) => {
     setFollowRobotState(false)
-    setViewport((current) => ({
-      ...current,
-      centerXMm: current.centerXMm - deltaXPx / current.zoomPxPerMm,
-      centerYMm: current.centerYMm + deltaYPx / current.zoomPxPerMm,
-    }))
+    setViewport((current) => {
+      const dragViewDelta = {
+        xMm: deltaXPx / current.zoomPxPerMm,
+        yMm: -deltaYPx / current.zoomPxPerMm,
+      }
+      const dragWorldDelta = rotateViewVectorToWorld(
+        dragViewDelta.xMm,
+        dragViewDelta.yMm,
+        current.rotationDeg,
+      )
+
+      return {
+        ...current,
+        centerXMm: current.centerXMm - dragWorldDelta.xMm,
+        centerYMm: current.centerYMm - dragWorldDelta.yMm,
+      }
+    })
   }
 
   const zoomViewport = (
@@ -1593,15 +1811,56 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
         return current
       }
 
-      const worldAnchorXMm =
-        current.centerXMm + (anchor.x - viewportSize.width / 2) / current.zoomPxPerMm
-      const worldAnchorYMm =
-        current.centerYMm - (anchor.y - viewportSize.height / 2) / current.zoomPxPerMm
+      const anchorViewOffset = {
+        xMm: (anchor.x - viewportSize.width / 2) / current.zoomPxPerMm,
+        yMm: -(anchor.y - viewportSize.height / 2) / current.zoomPxPerMm,
+      }
+      const worldAnchorOffset = rotateViewVectorToWorld(
+        anchorViewOffset.xMm,
+        anchorViewOffset.yMm,
+        current.rotationDeg,
+      )
+      const worldAnchorXMm = current.centerXMm + worldAnchorOffset.xMm
+      const worldAnchorYMm = current.centerYMm + worldAnchorOffset.yMm
+      const nextAnchorViewOffset = {
+        xMm: (anchor.x - viewportSize.width / 2) / nextZoom,
+        yMm: -(anchor.y - viewportSize.height / 2) / nextZoom,
+      }
+      const nextWorldAnchorOffset = rotateViewVectorToWorld(
+        nextAnchorViewOffset.xMm,
+        nextAnchorViewOffset.yMm,
+        current.rotationDeg,
+      )
 
       return {
-        centerXMm: worldAnchorXMm - (anchor.x - viewportSize.width / 2) / nextZoom,
-        centerYMm: worldAnchorYMm + (anchor.y - viewportSize.height / 2) / nextZoom,
+        centerXMm: worldAnchorXMm - nextWorldAnchorOffset.xMm,
+        centerYMm: worldAnchorYMm - nextWorldAnchorOffset.yMm,
         zoomPxPerMm: nextZoom,
+        rotationDeg: current.rotationDeg,
+      }
+    })
+  }
+
+  const rotateViewport = (deltaDeg: number) => {
+    if (deltaDeg === 0) {
+      return
+    }
+
+    setViewport((current) => ({
+      ...current,
+      rotationDeg: normalizeViewportRotation(current.rotationDeg + deltaDeg),
+    }))
+  }
+
+  const resetViewportRotation = () => {
+    setViewport((current) => {
+      if (current.rotationDeg === 0) {
+        return current
+      }
+
+      return {
+        ...current,
+        rotationDeg: 0,
       }
     })
   }
@@ -1666,5 +1925,7 @@ export function useSpatialViewModel(snapshot: SpatialSnapshot): SpatialViewModel
     returnToLive,
     panViewport,
     zoomViewport,
+    rotateViewport,
+    resetViewportRotation,
   }
 }

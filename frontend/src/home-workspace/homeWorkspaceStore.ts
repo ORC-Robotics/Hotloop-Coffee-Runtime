@@ -30,6 +30,7 @@ export interface HomeWorkspaceWidgetConfig {
 
 export interface HomeWorkspacePresetWidgetConfig {
   cameraFeedId: string | null
+  spatialTargetYawDeg: number | null
 }
 
 interface HomeWorkspaceWidgetBase {
@@ -114,6 +115,20 @@ function parseOptionalNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function normalizeHeadingDegrees(value: number) {
+  let normalized = value
+
+  while (normalized > 180) {
+    normalized -= 360
+  }
+
+  while (normalized < -180) {
+    normalized += 360
+  }
+
+  return normalized
+}
+
 function clampDecimals(value: number) {
   return Math.max(0, Math.min(4, Math.round(value)))
 }
@@ -149,6 +164,7 @@ export function createDefaultWidgetConfig(): HomeWorkspaceWidgetConfig {
 export function createDefaultPresetWidgetConfig(): HomeWorkspacePresetWidgetConfig {
   return {
     cameraFeedId: null,
+    spatialTargetYawDeg: null,
   }
 }
 
@@ -216,6 +232,10 @@ function sanitizePresetWidgetConfig(value: unknown): HomeWorkspacePresetWidgetCo
     cameraFeedId:
       typeof candidate.cameraFeedId === 'string' && candidate.cameraFeedId.trim().length
         ? candidate.cameraFeedId.trim()
+        : null,
+    spatialTargetYawDeg:
+      typeof candidate.spatialTargetYawDeg === 'number' && Number.isFinite(candidate.spatialTargetYawDeg)
+        ? normalizeHeadingDegrees(candidate.spatialTargetYawDeg)
         : null,
   }
 }

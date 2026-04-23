@@ -64,6 +64,7 @@ interface PlanarViewerCanvasProps {
     anchor: { x: number; y: number },
     viewportSize: { width: number; height: number },
   ) => void
+  onRotateViewport: (deltaDeg: number) => void
   onToggleFollowRobot: () => void
   onCenterRobot: () => void
   onResetView: () => void
@@ -151,10 +152,21 @@ function screenToWorld(
   viewport: SpatialViewportState,
   canvasSize: { width: number; height: number },
 ) {
+  const rotationRad = (viewport.rotationDeg * Math.PI) / 180
+  const cosRotation = Math.cos(rotationRad)
+  const sinRotation = Math.sin(rotationRad)
+  const viewXMm = (point.x - canvasSize.width / 2) / viewport.zoomPxPerMm
+  const viewYMm = -(point.y - canvasSize.height / 2) / viewport.zoomPxPerMm
+
   return {
-    xMm: viewport.centerXMm + (point.x - canvasSize.width / 2) / viewport.zoomPxPerMm,
-    yMm: viewport.centerYMm - (point.y - canvasSize.height / 2) / viewport.zoomPxPerMm,
+    xMm: viewport.centerXMm + viewXMm * cosRotation - viewYMm * sinRotation,
+    yMm: viewport.centerYMm + viewXMm * sinRotation + viewYMm * cosRotation,
   }
+}
+
+function formatViewportRotation(rotationDeg: number) {
+  const normalizedRotation = ((Math.round(rotationDeg) % 360) + 360) % 360
+  return normalizedRotation === 0 ? 'N Up' : `View ${normalizedRotation} deg`
 }
 
 function interpolatePose(
@@ -332,6 +344,7 @@ function buildGoalPreviewSceneModel(goalPreview: SpatialGoalPreview): PlanarScen
     requestedYMm: goalPreview.requestedYMm,
     targetXMm: goalPreview.target?.snappedXMm ?? null,
     targetYMm: goalPreview.target?.snappedYMm ?? null,
+    targetYawDeg: goalPreview.targetYawDeg,
     path: goalPreview.path,
   }
 }
@@ -340,15 +353,18 @@ function OverlayButton({
   label,
   onClick,
   compact = false,
+  title,
 }: {
   label: string
   onClick: () => void
   compact?: boolean
+  title?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={cn(
         'pointer-events-auto rounded-full border border-[var(--border)] bg-[var(--surface)]/88 font-semibold uppercase tracking-[0.14em] text-[var(--text)] backdrop-blur-sm transition-colors hover:bg-[var(--surface-alt)]',
         compact ? 'px-3 py-1.5 text-[0.64rem]' : 'px-3.5 py-2 text-[0.68rem]',
@@ -391,6 +407,7 @@ export function PlanarViewerCanvas({
   followRobot,
   onPanViewport,
   onZoomViewport,
+  onRotateViewport,
   onToggleFollowRobot,
   onCenterRobot,
   onResetView,
@@ -793,6 +810,8 @@ export function PlanarViewerCanvas({
               <OverlayButton compact label={followRobot ? 'Following' : 'Follow'} onClick={onToggleFollowRobot} />
               <OverlayButton compact label="Center" onClick={onCenterRobot} />
               <OverlayButton compact label="Reset" onClick={onResetView} />
+              <OverlayButton compact label={'\u21b6'} title="Rotate view left" onClick={() => onRotateViewport(-90)} />
+              <OverlayButton compact label={'\u21b7'} title="Rotate view right" onClick={() => onRotateViewport(90)} />
               <OverlayButton
                 compact
                 label={showOccupancyLayer ? 'Hide Occ' : 'Show Occ'}
@@ -836,6 +855,8 @@ export function PlanarViewerCanvas({
               <OverlayButton label={followRobot ? 'Following Robot' : 'Follow Robot'} onClick={onToggleFollowRobot} />
               <OverlayButton label="Center on Robot" onClick={onCenterRobot} />
               <OverlayButton label="Reset View" onClick={onResetView} />
+              <OverlayButton label={'\u21b6'} title="Rotate view left" onClick={() => onRotateViewport(-90)} />
+              <OverlayButton label={'\u21b7'} title="Rotate view right" onClick={() => onRotateViewport(90)} />
               <OverlayButton label="Clear Trail" onClick={onClearTrail} />
               <OverlayButton
                 label={showOccupancyLayer ? 'Hide Occupancy' : 'Show Occupancy'}
@@ -904,6 +925,7 @@ export function PlanarViewerCanvas({
           <>
             <div className="flex flex-wrap gap-2">
               <OverlayInfoChip label={`Zoom ${Math.round(viewport.zoomPxPerMm * 1000)} px/m`} />
+              <OverlayInfoChip label={formatViewportRotation(viewport.rotationDeg)} />
               <OverlayInfoChip label={`Trail ${trail.length}`} />
               <OverlayInfoChip label={`Scans ${observedMapScans.length}`} />
               {requireCtrlForInteraction ? <OverlayInfoChip label={interactionModifierActive ? 'Ctrl Armed' : 'Hold Ctrl'} /> : null}
@@ -931,6 +953,7 @@ export function PlanarViewerCanvas({
           <>
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface)]/88 px-3 py-2 text-[0.72rem] leading-6 text-[var(--text-muted)] backdrop-blur-sm">
               <div>Zoom {Math.round(viewport.zoomPxPerMm * 1000)} px/m</div>
+              <div>{formatViewportRotation(viewport.rotationDeg)}</div>
               <div>Trail {trail.length} pts</div>
               <div>Follow robot {followRobot ? 'enabled' : 'off'}</div>
               {requireCtrlForInteraction ? <div>Interaction requires Ctrl</div> : null}

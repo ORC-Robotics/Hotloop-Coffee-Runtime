@@ -6,6 +6,7 @@ import { cn } from '../../../lib/cn'
 import { clamp } from '../../../lib/format'
 import { getHomeWorkspacePresetDefinition } from '../../../home-workspace/homeWorkspacePresets'
 import {
+  type HomeWorkspacePresetWidget,
   isHomeWorkspacePresetWidget,
   isHomeWorkspaceTopicWidget,
   type HomeWorkspaceTopicWidget,
@@ -976,18 +977,16 @@ function PresetWorkspaceWidgetRenderer({
   derived,
   alerts,
   batteryHistory,
+  onUpdateWidget,
 }: {
-  widget: HomeWorkspaceWidget
+  widget: HomeWorkspacePresetWidget
   topicMap: Map<string, TelemetryTopic>
   snapshot: TelemetrySnapshot
   derived: TelemetryDerivedState
   alerts: AlertItem[]
   batteryHistory: BatteryHistoryPoint[]
+  onUpdateWidget: (widgetId: string, patch: { presetConfig?: Record<string, unknown> }) => void
 }) {
-  if (!isHomeWorkspacePresetWidget(widget)) {
-    return null
-  }
-
   if (widget.presetId === 'battery-watch') {
     return <BatteryPanelBody battery={snapshot.battery} history={batteryHistory} />
   }
@@ -1022,7 +1021,7 @@ function PresetWorkspaceWidgetRenderer({
   }
 
   if (widget.presetId === 'spatial-view') {
-    return <HomeWorkspaceSpatialViewWidget />
+    return <HomeWorkspaceSpatialViewWidget widget={widget} onUpdateWidget={onUpdateWidget} />
   }
 
   return (
@@ -1042,6 +1041,7 @@ export function HomeWorkspaceWidgetRenderer({
   derived,
   alerts,
   batteryHistory,
+  onUpdateWidget,
 }: {
   widget: HomeWorkspaceWidget
   topic: TelemetryTopic | null
@@ -1051,6 +1051,7 @@ export function HomeWorkspaceWidgetRenderer({
   derived: TelemetryDerivedState
   alerts: AlertItem[]
   batteryHistory: BatteryHistoryPoint[]
+  onUpdateWidget: (widgetId: string, patch: { presetConfig?: Record<string, unknown> }) => void
 }) {
   if (isHomeWorkspacePresetWidget(widget)) {
     return (
@@ -1061,6 +1062,7 @@ export function HomeWorkspaceWidgetRenderer({
         derived={derived}
         alerts={alerts}
         batteryHistory={batteryHistory}
+        onUpdateWidget={onUpdateWidget}
       />
     )
   }

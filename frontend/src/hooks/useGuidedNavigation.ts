@@ -13,7 +13,11 @@ const GUIDED_NAV_MAX_LINEAR_COMMAND = 1.0
 const GUIDED_NAV_MIN_LINEAR_COMMAND = 0.12
 const GUIDED_NAV_SLOWDOWN_DISTANCE_MM = 620
 const GUIDED_NAV_LOOKAHEAD_MM = 260
+const GUIDED_NAV_MIN_LOOKAHEAD_MM = 150
+const GUIDED_NAV_HEADING_LOOKAHEAD_MM = 220
+const GUIDED_NAV_FINAL_TARGET_YAW_CAPTURE_DISTANCE_MM = 320
 const GUIDED_NAV_GOAL_TOLERANCE_MM = 120
+const GUIDED_NAV_FINAL_HEADING_TOLERANCE_DEG = 8
 const GUIDED_NAV_TRACKING_WARNING_CROSS_TRACK_MM = 420
 const GUIDED_NAV_MAX_CROSS_TRACK_MM = 680
 const GUIDED_NAV_START_CROSS_TRACK_MM = 780
@@ -35,6 +39,11 @@ const GUIDED_NAV_LIDAR_SLOWDOWN_DISTANCE_MM = 620
 const GUIDED_NAV_LIDAR_CRITICAL_NEAREST_MM = 330
 const GUIDED_NAV_LIDAR_MIN_LIMITED_SCALE = 0.58
 const GUIDED_NAV_DIRECTION_DEADBAND = 0.04
+const GUIDED_NAV_MAX_ANGULAR_COMMAND = 0.42
+const GUIDED_NAV_HEADING_DEADBAND_DEG = 4
+const GUIDED_NAV_HEADING_FULL_SCALE_DEG = 55
+const GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_START_DEG = 18
+const GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_FULL_DEG = 72
 const GUIDED_INPUT_SOURCE = 'guided-nav'
 
 type GuidedLidarSafetyState = 'clear' | 'limited' | 'unavailable'
@@ -60,6 +69,8 @@ export interface GuidedNavigationState {
   pathProgressMm: number
   pathProgressRatio: number
   crossTrackErrorMm: number | null
+  targetYawDeg: number | null
+  yawErrorDeg: number | null
   commandX: number
   commandY: number
   commandZ: number
@@ -84,6 +95,8 @@ interface GuidedNavigationTelemetry {
   pathProgressMm: number
   pathProgressRatio: number
   crossTrackErrorMm: number | null
+  targetYawDeg: number | null
+  yawErrorDeg: number | null
   commandX: number
   commandY: number
   commandZ: number
@@ -105,6 +118,8 @@ interface GuidedCommandResult {
   pathProgressRatio: number
   totalPathLengthMm: number
   crossTrackErrorMm: number
+  targetYawDeg: number
+  yawErrorDeg: number
 }
 
 interface GuidedCommandVector {
@@ -131,6 +146,8 @@ function createIdleTelemetry(): GuidedNavigationTelemetry {
     pathProgressMm: 0,
     pathProgressRatio: 0,
     crossTrackErrorMm: null,
+    targetYawDeg: null,
+    yawErrorDeg: null,
     commandX: 0,
     commandY: 0,
     commandZ: 0,
@@ -160,6 +177,7 @@ function commandRunningMessage(
   crossTrackErrorMm: number,
   stallRecoveryActive = false,
   distanceToGoalMm: number | null = null,
+  yawErrorDeg: number | null = null,
   lidarSafety?: GuidedLidarSafetyResult,
 ) {
   if (lidarSafety?.state === 'limited') {
@@ -172,11 +190,42 @@ function commandRunningMessage(
     )} mm remaining.`
   }
 
+  if (
+    distanceToGoalMm !== null &&
+    distanceToGoalMm <= GUIDED_NAV_GOAL_TOLERANCE_MM &&
+    yawErrorDeg !== null &&
+    Math.abs(yawErrorDeg) > GUIDED_NAV_FINAL_HEADING_TOLERANCE_DEG
+  ) {
+    return `Guided Navigation V0 aligning final heading; yaw error ${Math.round(yawErrorDeg)} deg.`
+  }
+
   if (crossTrackErrorMm > GUIDED_NAV_TRACKING_WARNING_CROSS_TRACK_MM) {
     return `Guided Navigation V0 recovering to route; cross-track ${Math.round(crossTrackErrorMm)} mm.`
   }
 
+  if (yawErrorDeg !== null && Math.abs(yawErrorDeg) > GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_START_DEG) {
+    return `Guided Navigation V0 aligning to path heading; yaw error ${Math.round(yawErrorDeg)} deg.`
+  }
+
   return commandTone('running')
+}
+
+function normalizeAngleDelta(value: number) {
+  let next = value
+
+  while (next > 180) {
+    next -= 360
+  }
+
+  while (next < -180) {
+    next += 360
+  }
+
+  return next
+}
+
+function worldVectorToYawDeg(deltaXMm: number, deltaYMm: number) {
+  return (Math.atan2(deltaXMm, deltaYMm) * 180) / Math.PI
 }
 
 function worldDeltaToRobotLocal(
@@ -306,6 +355,96 @@ function selectPathPointAtProgress(path: SpatialPathPreviewPoint[], targetProgre
   }
 
   return path[path.length - 1]
+}
+
+function pathPointFromSelection(
+  selection:
+    | SpatialPathPreviewPoint
+    | {
+        point: SpatialPathPreviewPoint
+        segmentIndex: number
+      },
+) {
+  return 'point' in selection ? selection.point : selection
+}
+
+function resolveTargetYawDeg(
+  path: SpatialPathPreviewPoint[],
+  progressMm: number,
+  totalLengthMm: number,
+  pose: { xMm: number; yMm: number; yawDeg: number },
+  distanceToGoalMm: number,
+  goalTargetYawDeg: number | null,
+) {
+  if (
+    goalTargetYawDeg !== null &&
+    distanceToGoalMm <= GUIDED_NAV_FINAL_TARGET_YAW_CAPTURE_DISTANCE_MM
+  ) {
+    return goalTargetYawDeg
+  }
+
+  const startSelection = selectPathPointAtProgress(path, clamp(progressMm, 0, totalLengthMm))
+  const endSelection = selectPathPointAtProgress(
+    path,
+    Math.min(totalLengthMm, progressMm + GUIDED_NAV_HEADING_LOOKAHEAD_MM),
+  )
+  const startPoint = pathPointFromSelection(startSelection)
+  const endPoint = pathPointFromSelection(endSelection)
+  const headingDeltaXMm = endPoint.xMm - startPoint.xMm
+  const headingDeltaYMm = endPoint.yMm - startPoint.yMm
+
+  if (Math.hypot(headingDeltaXMm, headingDeltaYMm) <= 10) {
+    const finalTarget = path[path.length - 1]
+    if (!finalTarget) {
+      return pose.yawDeg
+    }
+
+    const finalDeltaXMm = finalTarget.xMm - pose.xMm
+    const finalDeltaYMm = finalTarget.yMm - pose.yMm
+    if (Math.hypot(finalDeltaXMm, finalDeltaYMm) <= 10) {
+      return pose.yawDeg
+    }
+
+    return worldVectorToYawDeg(finalDeltaXMm, finalDeltaYMm)
+  }
+
+  return worldVectorToYawDeg(headingDeltaXMm, headingDeltaYMm)
+}
+
+function computeHeadingCommand(yawErrorDeg: number) {
+  const absoluteYawErrorDeg = Math.abs(yawErrorDeg)
+  if (absoluteYawErrorDeg <= GUIDED_NAV_HEADING_DEADBAND_DEG) {
+    return 0
+  }
+
+  const normalizedError =
+    clamp(yawErrorDeg / GUIDED_NAV_HEADING_FULL_SCALE_DEG, -1, 1) *
+    GUIDED_NAV_MAX_ANGULAR_COMMAND
+
+  return clamp(
+    normalizedError,
+    -GUIDED_NAV_MAX_ANGULAR_COMMAND,
+    GUIDED_NAV_MAX_ANGULAR_COMMAND,
+  )
+}
+
+function computeHeadingLinearScale(yawErrorDeg: number) {
+  const absoluteYawErrorDeg = Math.abs(yawErrorDeg)
+  if (absoluteYawErrorDeg <= GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_START_DEG) {
+    return 1
+  }
+
+  const ratio = clamp(
+    (absoluteYawErrorDeg - GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_START_DEG) /
+      Math.max(
+        1,
+        GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_FULL_DEG - GUIDED_NAV_HEADING_LINEAR_SLOWDOWN_START_DEG,
+      ),
+    0,
+    1,
+  )
+
+  return clamp(1 - ratio * 0.55, 0.45, 1)
 }
 
 function distanceToFinalPathTargetMm(
@@ -497,12 +636,17 @@ function computeGuidedCommand(
 
   const distanceToGoalMm = Math.hypot(finalTarget.xMm - pose.xMm, finalTarget.yMm - pose.yMm)
   const pathProgressMm = Math.max(minProgressMm, projection.progressMm)
+  const lookaheadDistanceMm = clamp(
+    GUIDED_NAV_LOOKAHEAD_MM - projection.distanceToPathMm * 0.28,
+    GUIDED_NAV_MIN_LOOKAHEAD_MM,
+    GUIDED_NAV_LOOKAHEAD_MM,
+  )
   const targetProgressMm = Math.min(
     projection.totalLengthMm,
-    pathProgressMm + GUIDED_NAV_LOOKAHEAD_MM,
+    pathProgressMm + lookaheadDistanceMm,
   )
   const lookaheadSelection = selectPathPointAtProgress(path, targetProgressMm)
-  const lookaheadTarget = 'point' in lookaheadSelection ? lookaheadSelection.point : lookaheadSelection
+  const lookaheadTarget = pathPointFromSelection(lookaheadSelection)
   const lookaheadSegmentIndex =
     'segmentIndex' in lookaheadSelection
       ? lookaheadSelection.segmentIndex
@@ -513,8 +657,21 @@ function computeGuidedCommand(
   )
   const pathProgressRatio =
     projection.totalLengthMm <= 1 ? 0 : clamp(pathProgressMm / projection.totalLengthMm, 0, 1)
+  const targetYawDeg = resolveTargetYawDeg(
+    path,
+    pathProgressMm,
+    projection.totalLengthMm,
+    pose,
+    distanceToGoalMm,
+    goalPreview.targetYawDeg,
+  )
+  const yawErrorDeg = normalizeAngleDelta(targetYawDeg - pose.yawDeg)
+  const commandZ = computeHeadingCommand(yawErrorDeg)
 
-  if (distanceToGoalMm <= GUIDED_NAV_GOAL_TOLERANCE_MM) {
+  if (
+    distanceToGoalMm <= GUIDED_NAV_GOAL_TOLERANCE_MM &&
+    Math.abs(yawErrorDeg) <= GUIDED_NAV_FINAL_HEADING_TOLERANCE_DEG
+  ) {
     return {
       completed: true,
       commandX: 0,
@@ -528,11 +685,32 @@ function computeGuidedCommand(
       pathProgressRatio: 1,
       totalPathLengthMm: projection.totalLengthMm,
       crossTrackErrorMm: projection.distanceToPathMm,
+      targetYawDeg,
+      yawErrorDeg,
     }
   }
 
   if (distanceToWaypointMm <= 1 || projection.distanceToPathMm > crossTrackLimitMm) {
     return null
+  }
+
+  if (distanceToGoalMm <= GUIDED_NAV_GOAL_TOLERANCE_MM) {
+    return {
+      completed: false,
+      commandX: 0,
+      commandY: 0,
+      commandZ,
+      currentWaypointIndex: Math.max(0, path.length - 1),
+      totalWaypoints: Math.max(0, path.length - 1),
+      distanceToWaypointMm,
+      distanceToGoalMm,
+      pathProgressMm,
+      pathProgressRatio,
+      totalPathLengthMm: projection.totalLengthMm,
+      crossTrackErrorMm: projection.distanceToPathMm,
+      targetYawDeg,
+      yawErrorDeg,
+    }
   }
 
   const localTarget = worldDeltaToRobotLocal(pose, lookaheadTarget)
@@ -541,7 +719,8 @@ function computeGuidedCommand(
     GUIDED_NAV_MIN_LINEAR_COMMAND / GUIDED_NAV_MAX_LINEAR_COMMAND,
     1,
   )
-  const commandMagnitude = GUIDED_NAV_MAX_LINEAR_COMMAND * slowdownRatio
+  const commandMagnitude =
+    GUIDED_NAV_MAX_LINEAR_COMMAND * slowdownRatio * computeHeadingLinearScale(yawErrorDeg)
   const commandX = clamp(
     (localTarget.xMm / distanceToWaypointMm) * commandMagnitude,
     -GUIDED_NAV_MAX_LINEAR_COMMAND,
@@ -557,7 +736,7 @@ function computeGuidedCommand(
     completed: false,
     commandX,
     commandY,
-    commandZ: 0,
+    commandZ,
     currentWaypointIndex: Math.min(path.length - 1, lookaheadSegmentIndex + 1),
     totalWaypoints: Math.max(0, path.length - 1),
     distanceToWaypointMm,
@@ -566,6 +745,8 @@ function computeGuidedCommand(
     pathProgressRatio,
     totalPathLengthMm: projection.totalLengthMm,
     crossTrackErrorMm: projection.distanceToPathMm,
+    targetYawDeg,
+    yawErrorDeg,
   }
 }
 
@@ -740,6 +921,8 @@ export function useGuidedNavigation({
       pathProgressMm: 0,
       pathProgressRatio: 0,
       crossTrackErrorMm: null,
+      targetYawDeg: null,
+      yawErrorDeg: null,
       commandX: 0,
       commandY: 0,
       commandZ: 0,
@@ -783,6 +966,8 @@ export function useGuidedNavigation({
       setMessage(blockedMessage)
       setTelemetry((current) => ({
         ...current,
+        targetYawDeg: null,
+        yawErrorDeg: null,
         commandX: 0,
         commandY: 0,
         commandZ: 0,
@@ -816,6 +1001,8 @@ export function useGuidedNavigation({
       pathProgressMm: initialCommand.pathProgressMm,
       pathProgressRatio: initialCommand.pathProgressRatio,
       crossTrackErrorMm: initialCommand.crossTrackErrorMm,
+      targetYawDeg: initialCommand.targetYawDeg,
+      yawErrorDeg: initialCommand.yawErrorDeg,
       commandX: initialStreamCommand.commandX,
       commandY: initialStreamCommand.commandY,
       commandZ: initialStreamCommand.commandZ,
@@ -838,6 +1025,7 @@ export function useGuidedNavigation({
       initialCommand.crossTrackErrorMm,
       false,
       initialCommand.distanceToGoalMm,
+      initialCommand.yawErrorDeg,
       initialSafety,
     )
     setGuidedCommand({
@@ -910,6 +1098,8 @@ export function useGuidedNavigation({
         pathProgressMm: current.pathProgressMm,
         pathProgressRatio: nextStatus === 'completed' ? 1 : current.pathProgressRatio,
         crossTrackErrorMm: current.crossTrackErrorMm,
+        targetYawDeg: current.targetYawDeg,
+        yawErrorDeg: current.yawErrorDeg,
         commandX: 0,
         commandY: 0,
         commandZ: 0,
@@ -1073,6 +1263,8 @@ export function useGuidedNavigation({
         pathProgressMm: fusedProgressMm,
         pathProgressRatio: fusedProgressRatio,
         crossTrackErrorMm: command.crossTrackErrorMm,
+        targetYawDeg: command.targetYawDeg,
+        yawErrorDeg: command.yawErrorDeg,
         commandX: rampedStreamCommand.commandX,
         commandY: rampedStreamCommand.commandY,
         commandZ: rampedStreamCommand.commandZ,
@@ -1090,6 +1282,7 @@ export function useGuidedNavigation({
         command.crossTrackErrorMm,
         stallRecoveryActive,
         command.distanceToGoalMm,
+        command.yawErrorDeg,
         lidarSafety,
       )
       setMessage(runningMessage)
@@ -1124,6 +1317,8 @@ export function useGuidedNavigation({
     pathProgressMm: telemetry.pathProgressMm,
     pathProgressRatio: telemetry.pathProgressRatio,
     crossTrackErrorMm: telemetry.crossTrackErrorMm,
+    targetYawDeg: telemetry.targetYawDeg,
+    yawErrorDeg: telemetry.yawErrorDeg,
     commandX: telemetry.commandX,
     commandY: telemetry.commandY,
     commandZ: telemetry.commandZ,
