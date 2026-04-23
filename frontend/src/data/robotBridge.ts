@@ -10,6 +10,8 @@ import type {
   BridgeConnectionPreference,
   BridgeConnectionResponse,
   BridgeStatus,
+  ControlInputResponse,
+  ControlInputStateCommand,
   ControlModeFeed,
   OperatorCommand,
   RawBackendTelemetry,
@@ -56,6 +58,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     topicCatalogEndpoint: '/api/topics',
     topicWriteEndpoint: '/api/topics/write',
     remoteDriverEndpoint: '/api/remote-driver',
+    controlInputEndpoint: '/api/control-input/state',
     connected: false,
     robotLinkConnected: false,
     teamNumber: 0,
@@ -86,6 +89,7 @@ const TOPIC_WRITE_URL = `${BRIDGE_BASE_URL}/api/topics/write`
 const REMOTE_DRIVER_URL = `${BRIDGE_BASE_URL}/api/remote-driver`
 const REMOTE_DRIVER_STATE_URL = `${BRIDGE_BASE_URL}/api/remote-driver/state`
 const REMOTE_DRIVER_ACTION_URL = `${BRIDGE_BASE_URL}/api/remote-driver/action`
+const CONTROL_INPUT_STATE_URL = `${BRIDGE_BASE_URL}/api/control-input/state`
 const BRIDGE_CONNECTION_URL = `${BRIDGE_BASE_URL}/api/bridge/connection`
 
 export async function getTelemetrySnapshot(): Promise<TelemetrySnapshot> {
@@ -337,6 +341,38 @@ export async function sendRemoteDriverAction(
     ...adapted,
     message: rawPayload.message,
     error: rawPayload.error,
+  }
+}
+
+export async function sendControlInputState(
+  payload: import('../types/telemetry').ControlInputSnapshot,
+): Promise<ControlInputResponse> {
+  const command: ControlInputStateCommand = {
+    type: 'set_control_input_state',
+    payload,
+  }
+
+  try {
+    const response = await fetch(CONTROL_INPUT_STATE_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+    })
+
+    const result = (await response.json()) as Omit<ControlInputResponse, 'ok'>
+
+    return {
+      ok: response.ok,
+      ...result,
+    }
+  } catch {
+    return {
+      ok: false,
+      error: 'Control input stream unavailable.',
+    }
   }
 }
 

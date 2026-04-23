@@ -11,12 +11,15 @@ import {
 } from 'react'
 import {
   getRemoteDriverStatus,
+  sendControlInputState,
   sendRemoteDriverAction,
   sendRemoteDriverState,
 } from '../data/telemetryGateway'
 import { useTelemetryMode } from '../telemetry-mode/useTelemetryMode'
 import type {
   BridgeStatus,
+  ControlInputButtonState,
+  ControlInputSnapshot,
   RemoteDriverAction,
   RemoteDriverSessionMode,
   RemoteDriverStatus,
@@ -74,6 +77,33 @@ type KeyboardState = {
 
 type InputSample = DriverPreview
 
+const GAMEPAD_NAMED_AXIS_INDEX: Record<string, number> = {
+  leftX: 0,
+  leftY: 1,
+  rightX: 2,
+  rightY: 3,
+}
+
+const GAMEPAD_NAMED_BUTTON_INDEX: Record<string, number> = {
+  a: 0,
+  b: 1,
+  x: 2,
+  y: 3,
+  leftBumper: 4,
+  rightBumper: 5,
+  leftTrigger: 6,
+  rightTrigger: 7,
+  back: 8,
+  start: 9,
+  leftStick: 10,
+  rightStick: 11,
+  dpadUp: 12,
+  dpadDown: 13,
+  dpadLeft: 14,
+  dpadRight: 15,
+  guide: 16,
+}
+
 function clampUnit(value: number) {
   return Math.max(-1, Math.min(1, value))
 }
@@ -110,6 +140,7 @@ function createFallbackBridgeStatus(): BridgeStatus {
     topicCatalogEndpoint: '/api/topics',
     topicWriteEndpoint: '/api/topics/write',
     remoteDriverEndpoint: '/api/remote-driver',
+    controlInputEndpoint: '/api/control-input/state',
     connected: false,
     robotLinkConnected: false,
     teamNumber: 0,
@@ -207,7 +238,15 @@ function selectGamepad(preferredIndex: number | null) {
   return null
 }
 
-function readGamepadAxes(gamepad: Gamepad | null) {
+function normalizeButton(button: GamepadButton | undefined): ControlInputButtonState {
+  return {
+    pressed: Boolean(button?.pressed),
+    touched: Boolean(button?.touched),
+    value: clampUnit(Number(button?.value ?? 0)),
+  }
+}
+
+function readGamepadState(gamepad: Gamepad | null) {
   if (!gamepad) {
     return {
       x: 0,
@@ -216,27 +255,85 @@ function readGamepadAxes(gamepad: Gamepad | null) {
       active: false,
       connected: false,
       label: 'No controller detected',
+      mapping: '',
       index: null as number | null,
+      axes: [] as number[],
+      buttons: [] as ControlInputButtonState[],
+      namedAxes: Object.fromEntries(Object.keys(GAMEPAD_NAMED_AXIS_INDEX).map((key) => [key, 0])) as Record<string, number>,
+      namedButtons: Object.fromEntries(
+        Object.keys(GAMEPAD_NAMED_BUTTON_INDEX).map((key) => [key, normalizeButton(undefined)]),
+      ) as Record<string, ControlInputButtonState>,
     }
   }
 
-  const x = applyDeadband(gamepad.axes[0] ?? 0)
+  const axes = Array.from(gamepad.axes ?? [], (value) => applyDeadband(Number(value ?? 0)))
+  const buttons = Array.from(gamepad.buttons ?? [], (button) => normalizeButton(button))
+  const namedAxes = Object.fromEntries(
+    Object.entries(GAMEPAD_NAMED_AXIS_INDEX).map(([key, axisIndex]) => [key, axes[axisIndex] ?? 0]),
+  ) as Record<string, number>
+  const namedButtons = Object.fromEntries(
+    Object.entries(GAMEPAD_NAMED_BUTTON_INDEX).map(([key, buttonIndex]) => [key, buttons[buttonIndex] ?? normalizeButton(undefined)]),
+  ) as Record<string, ControlInputButtonState>
+
+  const x = axes[0] ?? 0
   const y = applyDeadband(-(gamepad.axes[1] ?? 0))
-  const z = applyDeadband(gamepad.axes[2] ?? 0)
+  const z = axes[2] ?? 0
+  const active =
+    Math.abs(x) > 0 ||
+    Math.abs(y) > 0 ||
+    Math.abs(z) > 0 ||
+    buttons.some((button) => button.pressed || Math.abs(button.value) > 0)
 
   return {
     x,
     y,
     z,
-    active: Math.abs(x) > 0 || Math.abs(y) > 0 || Math.abs(z) > 0,
+    active,
     connected: true,
     label: gamepad.id || `Gamepad ${gamepad.index + 1}`,
+    mapping: gamepad.mapping || '',
     index: gamepad.index,
+    axes,
+    buttons,
+    namedAxes,
+    namedButtons,
+  }
+}
+
+function buildControlInputSnapshot(
+  gamepadState: ReturnType<typeof readGamepadState>,
+  keyboardState: KeyboardState,
+  inputSample: InputSample,
+  windowActive: boolean,
+): ControlInputSnapshot {
+  return {
+    timestampMs: Date.now(),
+    source: DRIVER_SOURCE,
+    inputSource: inputSample.inputSource,
+    windowActive,
+    combined: {
+      x: inputSample.x,
+      y: inputSample.y,
+      z: inputSample.z,
+    },
+    keyboard: { ...keyboardState },
+    gamepad: {
+      connected: gamepadState.connected,
+      label: gamepadState.label,
+      mapping: gamepadState.mapping,
+      index: gamepadState.index,
+      axes: [...gamepadState.axes],
+      buttons: gamepadState.buttons.map((button) => ({ ...button })),
+      namedAxes: { ...gamepadState.namedAxes },
+      namedButtons: Object.fromEntries(
+        Object.entries(gamepadState.namedButtons).map(([key, button]) => [key, { ...button }]),
+      ),
+    },
   }
 }
 
 function combineInputs(
-  gamepadState: ReturnType<typeof readGamepadAxes>,
+  gamepadState: ReturnType<typeof readGamepadState>,
   keyboardState: ReturnType<typeof readKeyboardAxes>,
 ): InputSample {
   const activeSources: string[] = []
@@ -514,11 +611,12 @@ function useRemoteDriverController() {
 
     const tick = async () => {
       const selectedGamepad = selectGamepad(preferredGamepadIndexRef.current)
-      const gamepadState = readGamepadAxes(selectedGamepad)
+      const gamepadState = readGamepadState(selectedGamepad)
       preferredGamepadIndexRef.current = gamepadState.index
+      const keyboardAxes = readKeyboardAxes(keyboardStateRef.current)
       const operatorInputSample = combineInputs(
         gamepadState,
-        readKeyboardAxes(keyboardStateRef.current),
+        keyboardAxes,
       )
       const guidedCommand = guidedCommandRef.current
       const guidedCommandActive =
@@ -547,6 +645,25 @@ function useRemoteDriverController() {
       startTransition(() => {
         setPreview(inputSample)
       })
+
+      const controlSnapshot = buildControlInputSnapshot(
+        gamepadState,
+        keyboardStateRef.current,
+        inputSample,
+        windowActive,
+      )
+      const controlResponse = await sendControlInputState(controlSnapshot)
+      if (!cancelled) {
+        if (controlResponse.bridgeStatus) {
+          setBridgeStatus(controlResponse.bridgeStatus)
+        } else if (!controlResponse.ok) {
+          setBridgeStatus((previous) => ({
+            ...previous,
+            robotLinkConnected: false,
+            message: 'Control input stream degraded.',
+          }))
+        }
+      }
 
       if (!windowActive || remoteDriver.mode !== 'teleop') {
         return
