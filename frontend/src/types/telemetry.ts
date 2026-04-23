@@ -223,6 +223,7 @@ export interface BridgeStatus {
   topicCatalogEndpoint?: string
   topicWriteEndpoint?: string
   remoteDriverEndpoint?: string
+  controlInputEndpoint?: string
   connected: boolean
   robotLinkConnected?: boolean
   teamNumber?: number
@@ -278,6 +279,51 @@ export type TopicWriteCommand = {
   }
 }
 
+export interface ControlInputButtonState {
+  pressed: boolean
+  touched: boolean
+  value: number
+}
+
+export interface ControlInputKeyboardState {
+  left: boolean
+  right: boolean
+  forward: boolean
+  reverse: boolean
+  rotateLeft: boolean
+  rotateRight: boolean
+}
+
+export interface ControlInputGamepadState {
+  connected: boolean
+  label: string
+  mapping: string
+  index: number | null
+  axes: number[]
+  buttons: ControlInputButtonState[]
+  namedAxes: Record<string, number>
+  namedButtons: Record<string, ControlInputButtonState>
+}
+
+export interface ControlInputSnapshot {
+  timestampMs: number
+  source: string
+  inputSource: string
+  windowActive: boolean
+  combined: {
+    x: number
+    y: number
+    z: number
+  }
+  keyboard: ControlInputKeyboardState
+  gamepad: ControlInputGamepadState
+}
+
+export type ControlInputStateCommand = {
+  type: 'set_control_input_state'
+  payload: ControlInputSnapshot
+}
+
 export type RemoteDriverStateCommand = {
   type: 'set_remote_driver_state'
   payload: {
@@ -317,6 +363,13 @@ export interface TopicWriteResponse {
 
 export interface RemoteDriverResponse {
   remoteDriver?: RemoteDriverStatus
+  message?: string
+  error?: string
+  bridgeStatus?: BridgeStatus
+}
+
+export interface ControlInputResponse {
+  ok: boolean
   message?: string
   error?: string
   bridgeStatus?: BridgeStatus

@@ -1005,6 +1005,15 @@ class SimulationEngine {
     }
   }
 
+  sendControlInputState(payload: import('../types/telemetry').ControlInputSnapshot): import('../types/telemetry').ControlInputResponse {
+    void payload
+    return {
+      ok: true,
+      bridgeStatus: this.bridgeStatus,
+      message: 'Simulation control snapshot accepted.',
+    }
+  }
+
   sendRemoteDriverAction(
     action: RemoteDriverAction,
     source: string,
@@ -1248,6 +1257,12 @@ export async function sendRemoteDriverAction(
   sessionMode?: RemoteDriverSessionMode,
 ): Promise<RemoteDriverResponse> {
   return engine.sendRemoteDriverAction(action, source, sessionMode)
+}
+
+export async function sendControlInputState(
+  payload: import('../types/telemetry').ControlInputSnapshot,
+): Promise<import('../types/telemetry').ControlInputResponse> {
+  return engine.sendControlInputState(payload)
 }
 
 export async function writeTelemetryTopicValue(
