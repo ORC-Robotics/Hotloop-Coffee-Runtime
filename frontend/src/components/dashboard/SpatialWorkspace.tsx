@@ -280,6 +280,7 @@ export function SpatialWorkspace() {
           occupancyLayer={viewModel.occupancyLayer}
           showOccupancyLayer={viewModel.showOccupancyLayer}
           occupancyDisplayMode={viewModel.occupancyDisplayMode}
+          mazeOverlay={viewModel.mazeOverlay}
           goalPreview={viewModel.goalPreview}
           guidedNavigation={guidedNavigation}
           replaySelection={viewModel.replaySelection}
@@ -618,6 +619,75 @@ export function SpatialWorkspace() {
               Arming is still local:
             </span>{' '}
             this card selects and validates the route; execution is handled only by the supervised Guided Navigation V0 controls below.
+          </div>
+        </DashboardCard>
+
+        <DashboardCard title="Maze Planner" subtitle="robot-side onboard exploration intent" accent="primary">
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge
+              tone={viewModel.mazeOverlay?.available ? 'good' : 'warning'}
+              label={viewModel.mazeOverlay?.available ? viewModel.mazeOverlay.state : 'unavailable'}
+            />
+            <StatusBadge
+              tone={viewModel.mazeOverlay?.routeActive ? 'info' : 'neutral'}
+              label={viewModel.mazeOverlay?.subphase ?? 'IDLE'}
+            />
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            <MetadataRow label="Status" value={viewModel.mazeOverlay?.status ?? '--'} />
+            <MetadataRow
+              label="Coverage"
+              value={
+                viewModel.mazeOverlay
+                  ? `${(viewModel.mazeOverlay.coverageRatio * 100).toFixed(1)}%`
+                  : '--'
+              }
+            />
+            <MetadataRow
+              label="Integrated Scans"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.integratedScanCount) : '--'}
+            />
+            <MetadataRow
+              label="Route Length"
+              value={
+                viewModel.mazeOverlay
+                  ? formatMeters(viewModel.mazeOverlay.routeLengthMm / 1000, 3)
+                  : '--'
+              }
+            />
+            <MetadataRow
+              label="Route Points"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.route.length) : '--'}
+            />
+            <MetadataRow
+              label="Candidates"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.candidates.length) : '--'}
+            />
+            <MetadataRow
+              label="Replans"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.replans) : '--'}
+            />
+            <MetadataRow
+              label="Recoveries"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.recoveryCount) : '--'}
+            />
+            <MetadataRow
+              label="Stalls"
+              value={viewModel.mazeOverlay ? String(viewModel.mazeOverlay.stallCount) : '--'}
+            />
+            <MetadataRow
+              label="Target"
+              value={
+                viewModel.mazeOverlay?.target
+                  ? `${formatMeters(viewModel.mazeOverlay.target.xMm / 1000, 3)} x | ${formatMeters(viewModel.mazeOverlay.target.yMm / 1000, 3)} y`
+                  : '--'
+              }
+            />
+          </div>
+
+          <div className="mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-alt)]/72 px-3.5 py-3 text-[0.8rem] leading-6 text-[var(--text-muted)]">
+            This overlay is the robot’s own onboard maze planner, not a desktop guess. The walls still come from the desktop occupancy layer, while the route, active frontier target, and top candidate frontiers come from the Atlas autonomous runtime over a compact overlay packet.
           </div>
         </DashboardCard>
 

@@ -27,12 +27,14 @@ import type {
   SpatialTrailPoint,
   SpatialViewportState,
 } from '../../hooks/useSpatialViewModel'
+import type { SpatialMazeOverlay } from '../../types/telemetry'
 import type { GuidedNavigationState } from '../../hooks/useGuidedNavigation'
 import {
   type PlanarSceneBufferedLidar,
   drawPlanarScene,
   type PlanarSceneGoalPreview,
   type PlanarSceneLidar,
+  type PlanarSceneMazeOverlay,
   type PlanarSceneOccupancyLayer,
   type PlanarSceneObservedMap,
   type PlanarScenePalette,
@@ -53,6 +55,7 @@ interface PlanarViewerCanvasProps {
   occupancyLayer: SpatialOccupancyLayer | null
   showOccupancyLayer: boolean
   occupancyDisplayMode: SpatialOccupancyDisplayMode
+  mazeOverlay: SpatialMazeOverlay | null
   goalPreview: SpatialGoalPreview
   guidedNavigation?: GuidedNavigationState
   replaySelection: SpatialReplaySelection | null
@@ -131,6 +134,9 @@ function buildPalette(target: HTMLElement): PlanarScenePalette {
     occupancyFree: resolve('--info', '#38bdf8'),
     occupancyOccupied: resolve('--warning', '#f59e0b'),
     occupancyMixed: resolve('--accent', '#2dd4bf'),
+    mazeRoute: resolve('--primary', '#60a5fa'),
+    mazeTarget: resolve('--accent', '#34d399'),
+    mazeCandidate: resolve('--warning', '#fbbf24'),
     goalReady: resolve('--primary', '#7dd3fc'),
     goalArmed: resolve('--accent', '#2dd4bf'),
     goalBlocked: resolve('--warning', '#f59e0b'),
@@ -349,6 +355,41 @@ function buildGoalPreviewSceneModel(goalPreview: SpatialGoalPreview): PlanarScen
   }
 }
 
+function buildMazeOverlaySceneModel(
+  mazeOverlay: PlanarViewerCanvasProps['mazeOverlay'],
+): PlanarSceneMazeOverlay | null {
+  if (!mazeOverlay || !mazeOverlay.available) {
+    return null
+  }
+
+  return {
+    frame: mazeOverlay.frame,
+    state: mazeOverlay.state,
+    subphase: mazeOverlay.subphase,
+    status: mazeOverlay.status,
+    routeActive: mazeOverlay.routeActive,
+    routeLengthMm: mazeOverlay.routeLengthMm,
+    target: mazeOverlay.target
+      ? {
+          xMm: mazeOverlay.target.xMm,
+          yMm: mazeOverlay.target.yMm,
+          clearanceMm: mazeOverlay.target.clearanceMm,
+          score: mazeOverlay.target.score,
+        }
+      : null,
+    route: mazeOverlay.route.map((point: SpatialMazeOverlay['route'][number]) => ({
+      xMm: point.xMm,
+      yMm: point.yMm,
+    })),
+    candidates: mazeOverlay.candidates.map((candidate: SpatialMazeOverlay['candidates'][number]) => ({
+      xMm: candidate.xMm,
+      yMm: candidate.yMm,
+      clearanceMm: candidate.clearanceMm,
+      score: candidate.score,
+    })),
+  }
+}
+
 function OverlayButton({
   label,
   onClick,
@@ -400,6 +441,7 @@ export function PlanarViewerCanvas({
   occupancyLayer,
   showOccupancyLayer,
   occupancyDisplayMode,
+  mazeOverlay,
   goalPreview,
   guidedNavigation,
   replaySelection,
@@ -499,6 +541,7 @@ export function PlanarViewerCanvas({
       occupancyLayer,
       showOccupancyLayer,
       occupancyDisplayMode,
+      mazeOverlay,
       goalPreview,
       replaySelection,
     }),
@@ -506,6 +549,7 @@ export function PlanarViewerCanvas({
       lidarHistory,
       lidarSelection,
       occupancyDisplayMode,
+      mazeOverlay,
       goalPreview,
       occupancyLayer,
       observedMapFadeOlderScans,
@@ -611,6 +655,7 @@ export function PlanarViewerCanvas({
         sceneSnapshot.observedMapFadeOlderScans,
       ),
       occupancy: buildOccupancyLayer(sceneSnapshot.occupancyLayer),
+      mazeOverlay: buildMazeOverlaySceneModel(sceneSnapshot.mazeOverlay),
       goalPreview: buildGoalPreviewSceneModel(sceneSnapshot.goalPreview),
       lidarHistory: buildSceneLidarHistory(sceneSnapshot.lidarHistory),
       registration: buildRegistrationOverlay(sceneSnapshot.scanRegistration),
@@ -794,6 +839,7 @@ export function PlanarViewerCanvas({
                 }
               />
               <OverlayInfoChip label={`Goal ${goalPreview.status}`} />
+              {mazeOverlay?.available ? <OverlayInfoChip label={`Maze ${mazeOverlay.state}`} /> : null}
               {navStatusLabel ? <OverlayInfoChip label={navStatusLabel} /> : null}
               <OverlayInfoChip
                 label={
@@ -990,6 +1036,12 @@ export function PlanarViewerCanvas({
                   : goalPreview.target
                     ? `${goalPreview.status} | ${goalPreview.path.length} pts`
                     : goalPreview.status}
+              </div>
+              <div>
+                Maze overlay{' '}
+                {mazeOverlay?.available
+                  ? `${mazeOverlay.state} | ${mazeOverlay.route.length} route pts | ${mazeOverlay.candidates.length} cand`
+                  : 'unavailable'}
               </div>
               {guidedNavigation ? (
                 <div>

@@ -227,6 +227,7 @@ export interface SpatialViewModel {
   occupancyDisplayMode: SpatialOccupancyDisplayMode
   toggleOccupancyDisplayMode: () => void
   occupancyLayer: SpatialOccupancyLayer | null
+  mazeOverlay: SpatialSnapshot['maze']
   goalPreview: SpatialGoalPreview
   selectGoalAtWorldPoint: (point: SpatialPathPreviewPoint) => void
   armGoalPreview: () => void
@@ -1332,6 +1333,7 @@ export function useSpatialViewModel(
     () => computeGoalPreview(goalRequest, goalPreviewArmed, activePose, goalPlannerGrid, goalTargetYawDeg),
     [activePose, goalPlannerGrid, goalPreviewArmed, goalRequest, goalTargetYawDeg],
   )
+  const mazeOverlay = useMemo(() => snapshot.maze ?? null, [snapshot.maze])
 
   useEffect(() => {
     setObservedMapScans((current) => current.slice(-observedMapHistoryLimit))
@@ -1899,6 +1901,7 @@ export function useSpatialViewModel(
     occupancyDisplayMode,
     toggleOccupancyDisplayMode,
     occupancyLayer,
+    mazeOverlay,
     goalPreview,
     selectGoalAtWorldPoint,
     armGoalPreview,

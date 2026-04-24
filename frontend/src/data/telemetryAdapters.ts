@@ -13,6 +13,7 @@ import type {
   RemoteDriverFeed,
   RemoteDriverStatus,
   SpatialLidarScan,
+  SpatialMazeOverlay,
   SpatialSnapshot,
   SpatialStreamStatus,
   TelemetryCatalogFeed,
@@ -27,6 +28,7 @@ import {
   createDefaultPoseSources,
   createPlanarPoseData,
   createSpatialLidarScan,
+  createSpatialMazeOverlay,
   createSpatialStreamStatus,
 } from './mockTelemetry'
 
@@ -171,6 +173,70 @@ function normalizeSpatialStream(payload?: Partial<SpatialStreamStatus>): Spatial
   }
 }
 
+function normalizeSpatialMazeTarget(payload?: Partial<NonNullable<SpatialMazeOverlay['target']>>) {
+  if (!payload) {
+    return null
+  }
+
+  return {
+    cellKey: Number(payload.cellKey ?? 0),
+    clusterId: Number(payload.clusterId ?? -1),
+    clusterCellCount: Number(payload.clusterCellCount ?? 0),
+    xMm: Number(payload.xMm ?? 0),
+    yMm: Number(payload.yMm ?? 0),
+    routeLengthMm: Number(payload.routeLengthMm ?? 0),
+    score: Number(payload.score ?? 0),
+    clearanceMm: Number(payload.clearanceMm ?? 0),
+  }
+}
+
+function normalizeSpatialMazeOverlay(payload?: RawSpatialPayload['maze']): SpatialMazeOverlay | null {
+  if (!payload) {
+    return createSpatialMazeOverlay()
+  }
+
+  const route = Array.isArray(payload.route)
+    ? payload.route
+        .map((point) => ({
+          xMm: Number(point?.xMm ?? 0),
+          yMm: Number(point?.yMm ?? 0),
+        }))
+        .filter((point) => Number.isFinite(point.xMm) && Number.isFinite(point.yMm))
+    : []
+  const candidates = Array.isArray(payload.candidates)
+    ? payload.candidates
+        .map((candidate) => normalizeSpatialMazeTarget(candidate))
+        .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+    : []
+
+  return {
+    ...createSpatialMazeOverlay(),
+    ...(payload ?? {}),
+    available: payload.available ?? true,
+    frame: String(payload.frame ?? 'odometry_local'),
+    sequence: Number(payload.sequence ?? 0),
+    timestampMs: Number(payload.timestampMs ?? 0),
+    state: String(payload.state ?? 'IDLE'),
+    subphase: String(payload.subphase ?? 'IDLE'),
+    status: String(payload.status ?? 'No onboard maze planner overlay available.'),
+    coverageRatio: Number(payload.coverageRatio ?? 0),
+    integratedScanCount: Number(payload.integratedScanCount ?? 0),
+    replans: Number(payload.replans ?? 0),
+    recoveryCount: Number(payload.recoveryCount ?? 0),
+    stallCount: Number(payload.stallCount ?? 0),
+    routeActive: Boolean(payload.routeActive),
+    routeLengthMm: Number(payload.routeLengthMm ?? 0),
+    currentWaypointIndex: Number(payload.currentWaypointIndex ?? 0),
+    distanceToGoalMm: Number(payload.distanceToGoalMm ?? 0),
+    crossTrackMm: Number(payload.crossTrackMm ?? 0),
+    targetYawDeg: Number(payload.targetYawDeg ?? 0),
+    yawErrorDeg: Number(payload.yawErrorDeg ?? 0),
+    target: normalizeSpatialMazeTarget(payload.target ?? undefined),
+    route,
+    candidates,
+  }
+}
+
 export function adaptBackendTelemetry(payload: RawBackendTelemetry): TelemetrySnapshot {
   const base = createBaseSnapshot()
 
@@ -214,6 +280,7 @@ export function adaptSpatialPayload(payload: RawSpatialPayload): SpatialSnapshot
       : createFallbackBridgeStatus(),
     connection: { ...base.connection, ...payload.connection },
     lidar: normalizeSpatialLidar(payload.lidar),
+    maze: normalizeSpatialMazeOverlay(payload.maze),
     stream: normalizeSpatialStream(payload.stream),
   }
 }

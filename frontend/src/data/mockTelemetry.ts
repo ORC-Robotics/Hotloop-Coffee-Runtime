@@ -7,6 +7,7 @@ import type {
   SpatialLidarFormat,
   SpatialLidarScan,
   SpatialLidarSource,
+  SpatialMazeOverlay,
   SpatialSnapshot,
   SpatialStreamStatus,
   TelemetrySnapshot,
@@ -111,6 +112,36 @@ export function createSpatialStreamStatus(
       transport === 'simulation'
         ? 'Simulation spatial feed active.'
         : 'Dedicated spatial feed unavailable.',
+    ...overrides,
+  }
+}
+
+export function createSpatialMazeOverlay(
+  overrides: Partial<SpatialMazeOverlay> = {},
+): SpatialMazeOverlay {
+  return {
+    available: false,
+    frame: 'odometry_local',
+    sequence: 0,
+    timestampMs: 0,
+    state: 'IDLE',
+    subphase: 'IDLE',
+    status: 'No onboard maze planner overlay available.',
+    coverageRatio: 0,
+    integratedScanCount: 0,
+    replans: 0,
+    recoveryCount: 0,
+    stallCount: 0,
+    routeActive: false,
+    routeLengthMm: 0,
+    currentWaypointIndex: 0,
+    distanceToGoalMm: 0,
+    crossTrackMm: 0,
+    targetYawDeg: 0,
+    yawErrorDeg: 0,
+    target: null,
+    route: [],
+    candidates: [],
     ...overrides,
   }
 }
@@ -294,6 +325,7 @@ export function createBaseSpatialSnapshot(): SpatialSnapshot {
     pose: base.pose,
     poseSources: base.poseSources,
     lidar: createSpatialLidarScan('none', { available: false, freshness: 'invalid' }),
+    maze: createSpatialMazeOverlay(),
     stream: createSpatialStreamStatus('bridge-http-poll'),
   }
 }
@@ -308,6 +340,7 @@ export function createOfflineSpatialSnapshot(): SpatialSnapshot {
     pose: base.pose,
     poseSources: base.poseSources,
     lidar: createSpatialLidarScan('none', { available: false, freshness: 'invalid' }),
+    maze: createSpatialMazeOverlay(),
     stream: createSpatialStreamStatus('bridge-http-poll', {
       message: 'Dedicated spatial feed waiting for the robot link.',
     }),

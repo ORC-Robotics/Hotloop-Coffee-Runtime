@@ -151,6 +151,7 @@ export function HomeWorkspaceSpatialViewWidget({
           occupancyLayer={viewModel.occupancyLayer}
           showOccupancyLayer={viewModel.showOccupancyLayer}
           occupancyDisplayMode={viewModel.occupancyDisplayMode}
+          mazeOverlay={viewModel.mazeOverlay}
           goalPreview={viewModel.goalPreview}
           guidedNavigation={guidedNavigation}
           replaySelection={viewModel.replaySelection}

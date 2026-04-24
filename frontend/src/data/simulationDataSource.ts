@@ -3,6 +3,7 @@ import {
   createDefaultPoseSources,
   createPlanarPoseData,
   createSpatialLidarScan,
+  createSpatialMazeOverlay,
   createSpatialStreamStatus,
   generateMockTelemetryFrame,
 } from './mockTelemetry'
@@ -719,6 +720,7 @@ class SimulationEngine {
       pose: this.snapshot.pose,
       poseSources: this.snapshot.poseSources,
       lidar: this.buildSpatialLidar(this.snapshot, timestampMs),
+      maze: createSpatialMazeOverlay(),
       stream: createSpatialStreamStatus('simulation', {
         message: 'Dedicated simulation spatial feed active.',
       }),

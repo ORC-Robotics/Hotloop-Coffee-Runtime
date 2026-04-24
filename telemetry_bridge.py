@@ -52,6 +52,7 @@ POSE_SOURCE_DEFAULT_FRAMES = {
 POSE_SOURCE_STALE_AFTER_MS = 1000
 SPATIAL_ENDPOINT_PATH = "/api/spatial"
 SPATIAL_LIDAR_PACKET_KEY = "Telemetry/Spatial/Lidar Packet"
+MAZE_OVERLAY_PACKET_KEY = "Telemetry/Autonomous/Maze/Overlay Packet"
 SPATIAL_LIDAR_DEFAULT_FRAME = "robot_base"
 SPATIAL_LIDAR_FORMAT = "polar-2d-v1"
 SPATIAL_LIDAR_STALE_AFTER_MS = 1000
@@ -1119,6 +1120,116 @@ class TelemetryBridge:
             "timestampMs": 0,
         }
 
+    def _invalid_maze_overlay(self) -> dict[str, Any]:
+        return {
+            "available": False,
+            "frame": POSE_SOURCE_DEFAULT_FRAMES["odometry"],
+            "sequence": 0,
+            "timestampMs": 0,
+            "state": "IDLE",
+            "subphase": "IDLE",
+            "status": "No onboard maze planner overlay available.",
+            "coverageRatio": 0.0,
+            "integratedScanCount": 0,
+            "replans": 0,
+            "recoveryCount": 0,
+            "stallCount": 0,
+            "routeActive": False,
+            "routeLengthMm": 0.0,
+            "currentWaypointIndex": 0,
+            "distanceToGoalMm": 0.0,
+            "crossTrackMm": 0.0,
+            "targetYawDeg": 0.0,
+            "yawErrorDeg": 0.0,
+            "target": None,
+            "route": [],
+            "candidates": [],
+        }
+
+    def _parse_maze_target(self, payload: Any) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        try:
+            return {
+                "cellKey": int(payload.get("cellKey", 0)),
+                "clusterId": int(payload.get("clusterId", -1)),
+                "clusterCellCount": int(payload.get("clusterCellCount", 0)),
+                "xMm": float(payload.get("xMm", 0.0)),
+                "yMm": float(payload.get("yMm", 0.0)),
+                "routeLengthMm": float(payload.get("routeLengthMm", 0.0)),
+                "score": float(payload.get("score", 0.0)),
+                "clearanceMm": float(payload.get("clearanceMm", 0.0)),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _observe_maze_overlay(self, online: bool) -> dict[str, Any]:
+        if not online:
+            return self._invalid_maze_overlay()
+
+        raw_packet = self._get_string_alias(MAZE_OVERLAY_PACKET_KEY, default="")
+        packet_text = str(raw_packet or "").strip()
+        if not packet_text:
+            return self._invalid_maze_overlay()
+
+        try:
+            payload = json.loads(packet_text)
+        except Exception:
+            return self._invalid_maze_overlay()
+
+        if not isinstance(payload, dict):
+            return self._invalid_maze_overlay()
+
+        route_payload = payload.get("route")
+        route: list[dict[str, float]] = []
+        if isinstance(route_payload, list):
+            for item in route_payload[:96]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    route.append(
+                        {
+                            "xMm": float(item.get("xMm", 0.0)),
+                            "yMm": float(item.get("yMm", 0.0)),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+
+        candidates_payload = payload.get("candidates")
+        candidates: list[dict[str, Any]] = []
+        if isinstance(candidates_payload, list):
+            for item in candidates_payload[:3]:
+                parsed_target = self._parse_maze_target(item)
+                if parsed_target is not None:
+                    candidates.append(parsed_target)
+
+        return {
+            "available": True,
+            "frame": str(payload.get("frame") or POSE_SOURCE_DEFAULT_FRAMES["odometry"]),
+            "sequence": int(payload.get("sequence", 0)),
+            "timestampMs": int(payload.get("timestampMs", 0)),
+            "state": str(payload.get("state") or "IDLE"),
+            "subphase": str(payload.get("subphase") or "IDLE"),
+            "status": str(payload.get("status") or "No onboard maze planner overlay available."),
+            "coverageRatio": float(payload.get("coverageRatio", 0.0)),
+            "integratedScanCount": int(payload.get("integratedScanCount", 0)),
+            "replans": int(payload.get("replans", 0)),
+            "recoveryCount": int(payload.get("recoveryCount", 0)),
+            "stallCount": int(payload.get("stallCount", 0)),
+            "routeActive": bool(payload.get("routeActive", False)),
+            "routeLengthMm": float(payload.get("routeLengthMm", 0.0)),
+            "currentWaypointIndex": int(payload.get("currentWaypointIndex", 0)),
+            "distanceToGoalMm": float(payload.get("distanceToGoalMm", 0.0)),
+            "crossTrackMm": float(payload.get("crossTrackMm", 0.0)),
+            "targetYawDeg": float(payload.get("targetYawDeg", 0.0)),
+            "yawErrorDeg": float(payload.get("yawErrorDeg", 0.0)),
+            "target": self._parse_maze_target(payload.get("target")),
+            "route": route,
+            "candidates": candidates,
+        }
+
     def _parse_spatial_lidar_packet(self, raw_packet: str) -> dict[str, Any] | None:
         packet_text = str(raw_packet or "").strip()
         if not packet_text:
@@ -1561,6 +1672,7 @@ class TelemetryBridge:
             valid_scan,
             preferred_pose_frame,
         )
+        maze = self._observe_maze_overlay(online)
 
         if online and lidar["available"]:
             stream_message = "Dedicated spatial feed active with pose and compact lidar."
@@ -1579,6 +1691,7 @@ class TelemetryBridge:
             "pose": auto_pose,
             "poseSources": pose_sources,
             "lidar": lidar,
+            "maze": maze,
             "stream": {
                 "transport": "bridge-http-poll",
                 "endpoint": SPATIAL_ENDPOINT_PATH,

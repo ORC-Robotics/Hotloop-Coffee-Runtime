@@ -22,6 +22,9 @@ export interface PlanarScenePalette {
   occupancyFree: string
   occupancyOccupied: string
   occupancyMixed: string
+  mazeRoute: string
+  mazeTarget: string
+  mazeCandidate: string
   goalReady: string
   goalArmed: string
   goalBlocked: string
@@ -127,6 +130,30 @@ export interface PlanarSceneGoalPreview {
   path: PlanarSceneGoalPreviewPoint[]
 }
 
+export interface PlanarSceneMazeTarget {
+  xMm: number
+  yMm: number
+  clearanceMm: number
+  score: number
+}
+
+export interface PlanarSceneMazeRoutePoint {
+  xMm: number
+  yMm: number
+}
+
+export interface PlanarSceneMazeOverlay {
+  frame: string
+  state: string
+  subphase: string
+  status: string
+  routeActive: boolean
+  routeLengthMm: number
+  target: PlanarSceneMazeTarget | null
+  route: PlanarSceneMazeRoutePoint[]
+  candidates: PlanarSceneMazeTarget[]
+}
+
 export type PlanarSceneRegistrationQuality = 'good' | 'fair' | 'poor' | 'insufficient'
 
 export interface PlanarSceneRegistration {
@@ -144,6 +171,7 @@ export interface PlanarSceneModel {
   observedMap: PlanarSceneObservedMap | null
   occupancy: PlanarSceneOccupancyLayer | null
   goalPreview: PlanarSceneGoalPreview | null
+  mazeOverlay: PlanarSceneMazeOverlay | null
   lidarHistory: PlanarSceneBufferedLidar[]
   lidar: PlanarSceneLidar | null
   registration: PlanarSceneRegistration | null
@@ -585,6 +613,86 @@ function drawGoalPreview(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel)
   ctx.restore()
 }
 
+function drawMazeOverlay(ctx: CanvasRenderingContext2D, scene: PlanarSceneModel) {
+  if (!scene.mazeOverlay) {
+    return
+  }
+
+  const overlay = scene.mazeOverlay
+
+  if (overlay.route.length >= 2) {
+    ctx.save()
+    ctx.strokeStyle = scene.palette.mazeRoute
+    ctx.lineWidth = overlay.routeActive ? 2.8 : 2.0
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.globalAlpha = overlay.routeActive ? 0.88 : 0.56
+    ctx.beginPath()
+
+    overlay.route.forEach((point, index) => {
+      const screen = worldToScreen(point.xMm, point.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+      if (index === 0) {
+        ctx.moveTo(screen.x, screen.y)
+        return
+      }
+
+      ctx.lineTo(screen.x, screen.y)
+    })
+
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  if (overlay.candidates.length > 0) {
+    ctx.save()
+    ctx.strokeStyle = scene.palette.mazeCandidate
+    ctx.fillStyle = scene.palette.mazeCandidate
+    overlay.candidates.forEach((candidate, index) => {
+      const screen = worldToScreen(candidate.xMm, candidate.yMm, scene.viewport, scene.widthPx, scene.heightPx)
+      const radius = index === 0 ? 8 : 6
+      ctx.globalAlpha = index === 0 ? 0.52 : 0.34
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, radius + 4, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.globalAlpha = index === 0 ? 0.82 : 0.62
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2)
+      ctx.stroke()
+    })
+    ctx.restore()
+  }
+
+  if (overlay.target) {
+    const targetScreen = worldToScreen(
+      overlay.target.xMm,
+      overlay.target.yMm,
+      scene.viewport,
+      scene.widthPx,
+      scene.heightPx,
+    )
+
+    ctx.save()
+    ctx.strokeStyle = scene.palette.mazeTarget
+    ctx.fillStyle = scene.palette.mazeTarget
+    ctx.globalAlpha = 0.96
+    ctx.lineWidth = 2.2
+    ctx.beginPath()
+    ctx.arc(targetScreen.x, targetScreen.y, 12, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(targetScreen.x - 18, targetScreen.y)
+    ctx.lineTo(targetScreen.x + 18, targetScreen.y)
+    ctx.moveTo(targetScreen.x, targetScreen.y - 18)
+    ctx.lineTo(targetScreen.x, targetScreen.y + 18)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(targetScreen.x, targetScreen.y, 4.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
 function drawLidarScan(
   ctx: CanvasRenderingContext2D,
   scene: PlanarSceneModel,
@@ -785,6 +893,7 @@ export function drawPlanarScene(ctx: CanvasRenderingContext2D, scene: PlanarScen
   drawAxes(ctx, scene)
   drawOccupancyLayer(ctx, scene)
   drawObservedMap(ctx, scene)
+  drawMazeOverlay(ctx, scene)
   drawGoalPreview(ctx, scene)
 
   if (scene.pose) {

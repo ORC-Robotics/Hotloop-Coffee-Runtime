@@ -146,6 +146,47 @@ export interface SpatialStreamStatus {
   message: string
 }
 
+export interface SpatialMazeTarget {
+  cellKey: number
+  clusterId: number
+  clusterCellCount: number
+  xMm: number
+  yMm: number
+  routeLengthMm: number
+  score: number
+  clearanceMm: number
+}
+
+export interface SpatialMazeRoutePoint {
+  xMm: number
+  yMm: number
+}
+
+export interface SpatialMazeOverlay {
+  available: boolean
+  frame: string
+  sequence: number
+  timestampMs: number
+  state: string
+  subphase: string
+  status: string
+  coverageRatio: number
+  integratedScanCount: number
+  replans: number
+  recoveryCount: number
+  stallCount: number
+  routeActive: boolean
+  routeLengthMm: number
+  currentWaypointIndex: number
+  distanceToGoalMm: number
+  crossTrackMm: number
+  targetYawDeg: number
+  yawErrorDeg: number
+  target: SpatialMazeTarget | null
+  route: SpatialMazeRoutePoint[]
+  candidates: SpatialMazeTarget[]
+}
+
 export interface ReactiveStateData {
   state: string
   decision: string
@@ -406,6 +447,7 @@ export interface SpatialSnapshot {
   pose: PlanarPoseData
   poseSources: TelemetryPoseSources
   lidar: SpatialLidarScan
+  maze: SpatialMazeOverlay | null
   stream: SpatialStreamStatus
 }
 
@@ -482,6 +524,7 @@ export interface RawSpatialPayload {
   pose?: Partial<PlanarPoseData>
   poseSources?: Partial<Record<TelemetryPoseSourceKey, Partial<PlanarPoseData>>>
   lidar?: Partial<SpatialLidarScan>
+  maze?: Partial<SpatialMazeOverlay> | null
   stream?: Partial<SpatialStreamStatus>
 }
 
